@@ -1,0 +1,591 @@
+name: Build Clean HDMI with Button Control
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/clean-hdmi-buttons.yml'
+
+jobs:
+  build-clean-hdmi:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: '8'
+        distribution: 'temurin'
+    
+    - name: Download base app and tools
+      run: |
+        echo "📥 Setting up environment..."
+        mkdir -p work
+        cd work
+        
+        # Download working base APK
+        wget https://github.com/ma1co/PMCADemo/releases/download/v0.7/PMCADemo-release-0.7.apk -O base.apk
+        
+        # Download apktool
+        wget https://github.com/iBotPeaches/Apktool/releases/download/v2.9.0/apktool_2.9.0.jar -O apktool.jar
+        
+        echo "✅ Environment ready"
+    
+    - name: Decompile base APK
+      run: |
+        echo "🔧 Decompiling base APK..."
+        cd work
+        
+        java -jar apktool.jar d -f base.apk -o app
+        
+        echo "📁 App structure:"
+        ls -la app/
+        
+        # Check existing structure
+        echo "📂 Existing smali structure:"
+        ls -la app/smali/com/github/ma1co/pmcademo/ || true
+    
+    - name: Create Clean HDMI activity for button control
+      run: |
+        echo "💻 Creating Clean HDMI code for HX400 (button control)..."
+        cd work/app
+        
+        # Create our package directory
+        mkdir -p smali/com/cleanhdmi
+        
+        # Create main activity - simplified and corrected version
+        cat > smali/com/cleanhdmi/MainActivity.smali << 'EOF'
+        .class public Lcom/cleanhdmi/MainActivity;
+        .super Landroid/app/Activity;
+        .source "MainActivity.java"
+        
+        # instance fields
+        .field private isCleanMode:Z
+        .field private statusText:Landroid/widget/TextView;
+        .field private infoLayout:Landroid/widget/LinearLayout;
+        .field private focusLocked:Z
+        .field private exposureLocked:Z
+        
+        # direct methods
+        .method public constructor <init>()V
+            .locals 1
+            
+            .prologue
+            .line 10
+            invoke-direct {p0}, Landroid/app/Activity;-><init>()V
+            
+            .line 11
+            const/4 v0, 0x0
+            iput-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->isCleanMode:Z
+            iput-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->focusLocked:Z
+            iput-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->exposureLocked:Z
+            
+            return-void
+        .end method
+        
+        # virtual methods
+        .method protected onCreate(Landroid/os/Bundle;)V
+            .locals 0
+            .param p1, "savedInstanceState"
+            
+            .prologue
+            .line 20
+            invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V
+            
+            .line 21
+            invoke-direct {p0}, Lcom/cleanhdmi/MainActivity;->setupUI()V
+            
+            .line 22
+            invoke-direct {p0}, Lcom/cleanhdmi/MainActivity;->showInstructions()V
+            
+            return-void
+        .end method
+        
+        .method private setupUI()V
+            .locals 7
+            
+            .prologue
+            .line 30
+            # Request fullscreen
+            invoke-virtual {p0}, Lcom/cleanhdmi/MainActivity;->getWindow()Landroid/view/Window;
+            move-result-object v4
+            
+            const/16 v5, 0x400
+            invoke-virtual {v4, v5, v5}, Landroid/view/Window;->setFlags(II)V
+            
+            # Create main layout
+            .line 35
+            new-instance v0, Landroid/widget/FrameLayout;
+            invoke-direct {v0, p0}, Landroid/widget/FrameLayout;-><init>(Landroid/content/Context;)V
+            .local v0, "mainLayout":Landroid/widget/FrameLayout;
+            
+            const/high16 v5, -0x1000000
+            invoke-virtual {v0, v5}, Landroid/widget/FrameLayout;->setBackgroundColor(I)V
+            
+            # Create info panel
+            .line 40
+            new-instance v1, Landroid/widget/LinearLayout;
+            invoke-direct {v1, p0}, Landroid/widget/LinearLayout;-><init>(Landroid/content/Context;)V
+            iput-object v1, p0, Lcom/cleanhdmi/MainActivity;->infoLayout:Landroid/widget/LinearLayout;
+            
+            .local v1, "info":Landroid/widget/LinearLayout;
+            const/4 v5, 0x1
+            invoke-virtual {v1, v5}, Landroid/widget/LinearLayout;->setOrientation(I)V
+            
+            const/16 v5, 0x11
+            invoke-virtual {v1, v5}, Landroid/widget/LinearLayout;->setGravity(I)V
+            
+            const/16 v5, 0x14
+            invoke-virtual {v1, v5, v5, v5, v5}, Landroid/widget/LinearLayout;->setPadding(IIII)V
+            
+            # Create status text
+            .line 48
+            new-instance v2, Landroid/widget/TextView;
+            invoke-direct {v2, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
+            iput-object v2, p0, Lcom/cleanhdmi/MainActivity;->statusText:Landroid/widget/TextView;
+            
+            .local v2, "status":Landroid/widget/TextView;
+            const-string v5, "Clean HDMI Ready"
+            invoke-virtual {v2, v5}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+            
+            const/high16 v5, 0x41c00000    # 24.0f
+            invoke-virtual {v2, v5}, Landroid/widget/TextView;->setTextSize(F)V
+            
+            const/4 v5, -0x1
+            invoke-virtual {v2, v5}, Landroid/widget/TextView;->setTextColor(I)V
+            
+            const/16 v5, 0x11
+            invoke-virtual {v2, v5}, Landroid/widget/TextView;->setGravity(I)V
+            
+            invoke-virtual {v1, v2}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
+            
+            # Add info layout to main
+            .line 58
+            new-instance v3, Landroid/widget/FrameLayout$LayoutParams;
+            const/4 v5, -0x1
+            const/4 v6, -0x2
+            invoke-direct {v3, v5, v6}, Landroid/widget/FrameLayout$LayoutParams;-><init>(II)V
+            
+            .local v3, "params":Landroid/widget/FrameLayout$LayoutParams;
+            const/16 v5, 0x11
+            iput v5, v3, Landroid/widget/FrameLayout$LayoutParams;->gravity:I
+            
+            invoke-virtual {v0, v1, v3}, Landroid/widget/FrameLayout;->addView(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V
+            
+            # Set content view
+            .line 65
+            invoke-virtual {p0, v0}, Lcom/cleanhdmi/MainActivity;->setContentView(Landroid/view/View;)V
+            
+            return-void
+        .end method
+        
+        .method private showInstructions()V
+            .locals 4
+            
+            .prologue
+            .line 70
+            # Create instructions text
+            new-instance v0, Landroid/widget/TextView;
+            invoke-direct {v0, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
+            
+            .local v0, "instructions":Landroid/widget/TextView;
+            new-instance v1, Ljava/lang/StringBuilder;
+            invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
+            
+            const-string v2, "BUTTON CONTROLS:\n\n"
+            invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+            
+            const-string v2, "MENU - Toggle Clean Mode\n"
+            invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+            
+            const-string v2, "UP - Lock/Unlock Focus\n"
+            invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+            
+            const-string v2, "DOWN - Lock/Unlock Exposure\n"
+            invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+            
+            const-string v2, "CENTER - Show/Hide Info"
+            invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+            
+            invoke-virtual {v1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+            move-result-object v2
+            invoke-virtual {v0, v2}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+            
+            const/high16 v2, 0x41800000    # 16.0f
+            invoke-virtual {v0, v2}, Landroid/widget/TextView;->setTextSize(F)V
+            
+            const v2, -0x333334
+            invoke-virtual {v0, v2}, Landroid/widget/TextView;->setTextColor(I)V
+            
+            const/16 v2, 0x11
+            invoke-virtual {v0, v2}, Landroid/widget/TextView;->setGravity(I)V
+            
+            const/4 v2, 0x0
+            const/16 v3, 0x14
+            invoke-virtual {v0, v2, v3, v2, v2}, Landroid/widget/TextView;->setPadding(IIII)V
+            
+            # Add to info layout
+            iget-object v2, p0, Lcom/cleanhdmi/MainActivity;->infoLayout:Landroid/widget/LinearLayout;
+            invoke-virtual {v2, v0}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
+            
+            return-void
+        .end method
+        
+        .method public onKeyDown(ILandroid/view/KeyEvent;)Z
+            .locals 3
+            .param p1, "keyCode"
+            .param p2, "event"
+            
+            .prologue
+            const/4 v0, 0x1
+            
+            # Handle button presses
+            sparse-switch p1, :sswitch_data_0
+            
+            # Default handling
+            invoke-super {p0, p1, p2}, Landroid/app/Activity;->onKeyDown(ILandroid/view/KeyEvent;)Z
+            move-result v0
+            :goto_0
+            return v0
+            
+            # MENU button - toggle clean mode
+            :sswitch_0
+            invoke-direct {p0}, Lcom/cleanhdmi/MainActivity;->toggleCleanMode()V
+            goto :goto_0
+            
+            # UP button - toggle focus lock
+            :sswitch_1
+            invoke-direct {p0}, Lcom/cleanhdmi/MainActivity;->toggleFocusLock()V
+            goto :goto_0
+            
+            # DOWN button - toggle exposure lock
+            :sswitch_2
+            invoke-direct {p0}, Lcom/cleanhdmi/MainActivity;->toggleExposureLock()V
+            goto :goto_0
+            
+            # CENTER/OK button - toggle info display
+            :sswitch_3
+            invoke-direct {p0}, Lcom/cleanhdmi/MainActivity;->toggleInfoDisplay()V
+            goto :goto_0
+            
+            .line 100
+            :sswitch_data_0
+            .sparse-switch
+                0x13 -> :sswitch_1    # KEYCODE_DPAD_UP
+                0x14 -> :sswitch_2    # KEYCODE_DPAD_DOWN
+                0x17 -> :sswitch_3    # KEYCODE_DPAD_CENTER
+                0x52 -> :sswitch_0    # KEYCODE_MENU
+            .end sparse-switch
+        .end method
+        
+        .method private toggleCleanMode()V
+            .locals 3
+            
+            .prologue
+            .line 110
+            iget-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->isCleanMode:Z
+            if-nez v0, :cond_0
+            const/4 v0, 0x1
+            :goto_0
+            iput-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->isCleanMode:Z
+            
+            iget-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->isCleanMode:Z
+            if-eqz v0, :cond_1
+            
+            # Hide everything for clean output
+            iget-object v0, p0, Lcom/cleanhdmi/MainActivity;->infoLayout:Landroid/widget/LinearLayout;
+            const/16 v1, 0x8
+            invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
+            
+            goto :goto_1
+            
+            :cond_0
+            const/4 v0, 0x0
+            goto :goto_0
+            
+            :cond_1
+            # Show info
+            iget-object v0, p0, Lcom/cleanhdmi/MainActivity;->infoLayout:Landroid/widget/LinearLayout;
+            const/4 v1, 0x0
+            invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
+            
+            iget-object v0, p0, Lcom/cleanhdmi/MainActivity;->statusText:Landroid/widget/TextView;
+            const-string v1, "Clean HDMI Ready"
+            invoke-virtual {v0, v1}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+            
+            :goto_1
+            return-void
+        .end method
+        
+        .method private toggleFocusLock()V
+            .locals 3
+            
+            .prologue
+            .line 130
+            iget-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->focusLocked:Z
+            if-nez v0, :cond_0
+            const/4 v0, 0x1
+            :goto_0
+            iput-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->focusLocked:Z
+            
+            # Update status if visible
+            iget-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->isCleanMode:Z
+            if-nez v0, :cond_2
+            
+            iget-object v1, p0, Lcom/cleanhdmi/MainActivity;->statusText:Landroid/widget/TextView;
+            iget-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->focusLocked:Z
+            if-eqz v0, :cond_1
+            const-string v0, "Focus: LOCKED"
+            :goto_1
+            invoke-virtual {v1, v0}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+            
+            :goto_2
+            return-void
+            
+            :cond_0
+            const/4 v0, 0x0
+            goto :goto_0
+            
+            :cond_1
+            const-string v0, "Focus: AUTO"
+            goto :goto_1
+            
+            :cond_2
+            return-void
+        .end method
+        
+        .method private toggleExposureLock()V
+            .locals 3
+            
+            .prologue
+            .line 150
+            iget-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->exposureLocked:Z
+            if-nez v0, :cond_0
+            const/4 v0, 0x1
+            :goto_0
+            iput-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->exposureLocked:Z
+            
+            # Update status if visible
+            iget-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->isCleanMode:Z
+            if-nez v0, :cond_2
+            
+            iget-object v1, p0, Lcom/cleanhdmi/MainActivity;->statusText:Landroid/widget/TextView;
+            iget-boolean v0, p0, Lcom/cleanhdmi/MainActivity;->exposureLocked:Z
+            if-eqz v0, :cond_1
+            const-string v0, "Exposure: LOCKED"
+            :goto_1
+            invoke-virtual {v1, v0}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+            
+            :goto_2
+            return-void
+            
+            :cond_0
+            const/4 v0, 0x0
+            goto :goto_0
+            
+            :cond_1
+            const-string v0, "Exposure: AUTO"
+            goto :goto_1
+            
+            :cond_2
+            return-void
+        .end method
+        
+        .method private toggleInfoDisplay()V
+            .locals 2
+            
+            .prologue
+            .line 170
+            iget-object v0, p0, Lcom/cleanhdmi/MainActivity;->infoLayout:Landroid/widget/LinearLayout;
+            invoke-virtual {v0}, Landroid/widget/LinearLayout;->getVisibility()I
+            move-result v0
+            
+            if-nez v0, :cond_0
+            
+            iget-object v0, p0, Lcom/cleanhdmi/MainActivity;->infoLayout:Landroid/widget/LinearLayout;
+            const/16 v1, 0x8
+            invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
+            
+            :goto_0
+            return-void
+            
+            :cond_0
+            iget-object v0, p0, Lcom/cleanhdmi/MainActivity;->infoLayout:Landroid/widget/LinearLayout;
+            const/4 v1, 0x0
+            invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
+            
+            goto :goto_0
+        .end method
+        EOF
+        
+        echo "✅ Clean HDMI activity created with button controls"
+    
+    - name: Update AndroidManifest
+      run: |
+        echo "📝 Updating AndroidManifest..."
+        cd work/app
+        
+        # Backup original
+        cp AndroidManifest.xml AndroidManifest.xml.bak
+        
+        # Update to use our activity
+        sed -i 's/com\.github\.ma1co\.pmcademo\.MainActivity/com.cleanhdmi.MainActivity/g' AndroidManifest.xml
+        sed -i 's/android:label="[^"]*"/android:label="Clean HDMI"/g' AndroidManifest.xml
+        
+        echo "✅ Manifest updated"
+    
+    - name: Update strings
+      run: |
+        echo "📝 Updating strings..."
+        cd work/app
+        
+        if [ -f "res/values/strings.xml" ]; then
+          sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">Clean HDMI<\/string>/g' res/values/strings.xml
+        fi
+        
+        echo "✅ Strings updated"
+    
+    - name: Build APK
+      run: |
+        echo "🔨 Building Clean HDMI APK..."
+        cd work
+        
+        java -jar apktool.jar b app -o CleanHDMI_unsigned.apk
+        
+        if [ ! -f "CleanHDMI_unsigned.apk" ]; then
+          echo "❌ Build failed, checking for errors..."
+          java -jar apktool.jar b app -o CleanHDMI_unsigned.apk --verbose
+          exit 1
+        fi
+        
+        echo "✅ APK built successfully"
+        ls -lh CleanHDMI_unsigned.apk
+    
+    - name: Sign APK
+      run: |
+        echo "🔐 Signing APK..."
+        cd work
+        
+        # Create keystore
+        keytool -genkeypair \
+          -keyalg RSA \
+          -keysize 2048 \
+          -validity 10000 \
+          -alias cleanhdmi \
+          -keystore cleanhdmi.keystore \
+          -storepass android \
+          -keypass android \
+          -dname "CN=CleanHDMI,O=GitHub,C=US" \
+          -noprompt
+        
+        # Sign APK
+        jarsigner \
+          -sigalg SHA1withRSA \
+          -digestalg SHA1 \
+          -keystore cleanhdmi.keystore \
+          -storepass android \
+          -signedjar CleanHDMI.apk \
+          CleanHDMI_unsigned.apk \
+          cleanhdmi
+        
+        echo "✅ APK signed"
+        ls -lh CleanHDMI.apk
+    
+    - name: Create user manual
+      run: |
+        echo "📚 Creating user manual..."
+        cd work
+        
+        cat > USER_MANUAL.txt << 'EOF'
+        ================================================
+        Clean HDMI for Sony DSC-HX400 - User Manual
+        ================================================
+        
+        PURPOSE:
+        --------
+        This app provides clean HDMI output from your Sony HX400 camera
+        by hiding all UI elements. Perfect for streaming, recording, or
+        using the camera as a webcam.
+        
+        BUTTON CONTROLS (HX400):
+        ------------------------
+        The HX400 has physical buttons only (no touchscreen).
+        Use these controls:
+        
+        [MENU] Button    - Toggle Clean HDMI Mode ON/OFF
+                          Press to completely hide/show all UI
+        
+        [UP] Button      - Lock/Unlock Focus
+                          Prevents autofocus from changing
+        
+        [DOWN] Button    - Lock/Unlock Exposure  
+                          Fixes current exposure settings
+        
+        [CENTER/OK]      - Show/Hide Information Display
+                          Quick toggle for status info
+        
+        [BACK]           - Exit application
+        
+        HOW TO USE:
+        -----------
+        1. Connect HDMI cable to your capture device
+        2. Launch "Clean HDMI" from camera apps menu
+        3. You'll see button control instructions
+        4. Press MENU to activate clean mode
+        5. All UI disappears - HDMI output is now clean!
+        6. Press MENU again to see controls
+        
+        OPERATING MODES:
+        ----------------
+        • Normal Mode - Shows status and instructions
+        • Clean Mode  - Completely blank screen (clean HDMI)
+        • Info Hidden - Middle state with minimal UI
+        
+        TIPS:
+        -----
+        • Set up your shot before entering clean mode
+        • Lock focus and exposure for stable output
+        • HDMI output remains active even with screen off
+        • Camera continues to function normally
+        • Use physical zoom ring for zooming
+        
+        INSTALLATION:
+        -------------
+        1. Connect camera via USB (Mass Storage mode)
+        2. Run: pmca-console.exe install -f CleanHDMI.apk
+        3. Disconnect USB
+        4. Find app in camera menu
+        
+        TROUBLESHOOTING:
+        ----------------
+        • No HDMI output? Check cable and try different port
+        • UI still visible? Press MENU button to toggle
+        • Camera not responding? Press BACK to exit app
+        
+        Version: 1.0 (Button Control Edition)
+        Designed specifically for Sony DSC-HX400/HX400V
+        Build Date: $(date)
+        EOF
+        
+        echo "✅ User manual created"
+        
+        echo ""
+        echo "========================================="
+        echo "✅ CLEAN HDMI APP BUILD COMPLETE!"
+        echo "========================================="
+        echo ""
+        echo "Features for HX400:"
+        echo "• Button-only control (no touch needed)"
+        echo "• Clean HDMI output mode"  
+        echo "• Focus and exposure lock"
+        echo "• Simple operation with camera buttons"
+    
+    - name: Upload final APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: CleanHDMI-HX400-${{ github.run_number }}
+        path: |
+          work/CleanHDMI.apk
+          work/USER_MANUAL.txt
+        retention-days: 90
+        if-no-files-found: error

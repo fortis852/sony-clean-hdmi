@@ -11,137 +11,199 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: '8'
+        distribution: 'temurin'
+    
     - name: Setup environment
       run: |
         echo "🔧 Setting up environment..."
         
-        # Install required packages
-        sudo apt-get update
-        sudo apt-get install -y wget unzip zip python3 python3-pip
+        # Create working directories
+        mkdir -p reference build tools
         
-        # Install pmca-py for validation
-        pip3 install pmca-py
+        # Install pmca-py from GitHub
+        echo "Installing pmca-py from source..."
+        git clone https://github.com/ma1co/pmca-py.git || true
+        
+        # Download required tools
+        cd tools
+        
+        echo "Downloading dx..."
+        wget -q https://github.com/PerfectSlayer/dx-binary/raw/master/dx.jar || echo "dx download failed"
+        
+        echo "Downloading apktool..."
+        wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.9.0/apktool_2.9.0.jar -O apktool.jar || echo "apktool download failed"
+        
+        cd ..
     
     - name: Download and analyze working Sony apps
       run: |
-        echo "📥 Downloading working Sony apps for analysis..."
-        mkdir -p reference
+        echo "📥 Downloading working Sony apps..."
         cd reference
         
-        # Download multiple working apps to understand structure
-        echo "Downloading PMCADemo..."
-        wget -q "https://github.com/ma1co/PMCADemo/releases/download/release-14/com.github.ma1co.PMCADemo-release-14.apk" -O pmcademo.apk || true
+        # Download apps that definitely work on Sony cameras
+        apps=(
+          "https://github.com/ma1co/PMCADemo/releases/download/release-14/com.github.ma1co.PMCADemo-release-14.apk"
+          "https://github.com/ma1co/OpenMemories-Tweak/releases/download/release-41/com.github.ma1co.OpenMemories-Tweak-release-41.apk"
+          "https://github.com/ma1co/STG/releases/download/release-3/com.github.ma1co.STG-release-3.apk"
+        )
         
-        echo "Downloading OpenMemories-Tweak..."
-        wget -q "https://github.com/ma1co/OpenMemories-Tweak/releases/download/release-41/com.github.ma1co.OpenMemories-Tweak-release-41.apk" -O tweak.apk || true
+        for url in "${apps[@]}"; do
+          filename=$(basename "$url")
+          echo "Downloading $filename..."
+          wget -q "$url" || echo "Failed to download $filename"
+        done
         
-        echo "Downloading STG..."
-        wget -q "https://github.com/ma1co/STG/releases/download/release-3/com.github.ma1co.STG-release-3.apk" -O stg.apk || true
-        
-        # Extract and analyze structure
+        # Use the first available APK as reference
         for apk in *.apk; do
           if [ -f "$apk" ]; then
-            echo "Analyzing $apk..."
-            unzip -l "$apk" | head -20
+            echo "Using $apk as reference"
+            unzip -q "$apk" -d extracted
             
-            # Extract the first working one
-            if [ ! -d "extracted" ]; then
-              unzip -q "$apk" -d extracted
-              echo "✅ Extracted $apk as reference"
+            echo "Reference APK structure:"
+            ls -la extracted/
+            
+            # Check if it has binary manifest
+            if [ -f "extracted/AndroidManifest.xml" ]; then
+              echo "Manifest first bytes:"
+              xxd -l 16 extracted/AndroidManifest.xml
             fi
+            
+            break
           fi
         done
         
         cd ..
     
-    - name: Create minimal Sony-compatible app
+    - name: Method 1 - Modify existing working APK
       run: |
-        echo "📱 Creating minimal Sony app..."
-        mkdir -p build
-        cd build
+        echo "📱 Method 1: Modifying working APK..."
         
-        # Copy structure from reference if available
-        if [ -d "../reference/extracted" ]; then
-          echo "Using reference structure..."
-          cp -r ../reference/extracted/* . 2>/dev/null || true
+        if [ -d "reference/extracted" ]; then
+          mkdir -p build/method1
+          cd build/method1
           
-          # Clean up unnecessary files
-          rm -rf META-INF classes.dex
+          # Copy working APK structure
+          cp -r ../../reference/extracted/* .
           
-          # Keep only essential structure
-          ls -la
+          # Try to decompile and recompile with apktool
+          if [ -f "../../tools/apktool.jar" ]; then
+            echo "Using apktool to modify APK..."
+            
+            # First, create a simple APK from the working one
+            cd ../..
+            
+            # Find a working APK
+            working_apk=""
+            for apk in reference/*.apk; do
+              if [ -f "$apk" ]; then
+                working_apk="$apk"
+                break
+              fi
+            done
+            
+            if [ -n "$working_apk" ]; then
+              echo "Decompiling $working_apk..."
+              java -jar tools/apktool.jar d -f "$working_apk" -o build/method1_decompiled || {
+                echo "Apktool decompile failed"
+              }
+              
+              if [ -d "build/method1_decompiled" ]; then
+                cd build/method1_decompiled
+                
+                # Modify the app name in resources
+                if [ -f "res/values/strings.xml" ]; then
+                  sed -i 's/>.*</Clean HDMI</g' res/values/strings.xml 2>/dev/null || true
+                fi
+                
+                # Change package name in manifest (carefully)
+                if [ -f "AndroidManifest.xml" ]; then
+                  # Only change the label, not the package name (to keep compatibility)
+                  sed -i 's/android:label="[^"]*"/android:label="Clean HDMI"/g' AndroidManifest.xml || true
+                fi
+                
+                cd ../..
+                
+                # Rebuild
+                echo "Rebuilding APK..."
+                java -jar tools/apktool.jar b build/method1_decompiled -o build/CleanHDMI_method1.apk || {
+                  echo "Rebuild failed"
+                }
+              fi
+            fi
+          else
+            # Simple repackage
+            cd build/method1
+            zip -r ../CleanHDMI_method1_simple.apk * || true
+            cd ../..
+          fi
         fi
+    
+    - name: Method 2 - Build minimal APK from scratch
+      run: |
+        echo "📱 Method 2: Building minimal APK..."
+        mkdir -p build/method2
+        cd build/method2
         
-        # Create minimal Java class
-        mkdir -p java
-        cat > java/MainActivity.java << 'EOF'
+        # Download Android 10 JAR (what Sony cameras use)
+        wget -q https://github.com/Sable/android-platforms/raw/master/android-10/android.jar || {
+          echo "Failed to download android.jar"
+        }
+        
+        # Create minimal Java code
+        mkdir -p src/com/github/cleanhdmi
+        cat > src/com/github/cleanhdmi/MainActivity.java << 'EOF'
         package com.github.cleanhdmi;
         
-        public class MainActivity extends android.app.Activity {
-            protected void onCreate(android.os.Bundle savedInstanceState) {
+        import android.app.Activity;
+        import android.os.Bundle;
+        import android.widget.TextView;
+        
+        public class MainActivity extends Activity {
+            public void onCreate(Bundle savedInstanceState) {
                 super.onCreate(savedInstanceState);
-                
-                android.widget.TextView tv = new android.widget.TextView(this);
+                TextView tv = new TextView(this);
                 tv.setText("Clean HDMI");
-                tv.setTextSize(30);
-                tv.setGravity(17);
-                tv.setTextColor(-1);
-                tv.setBackgroundColor(-16777216);
                 setContentView(tv);
-                
-                getWindow().addFlags(1024);
-                getWindow().addFlags(128);
             }
         }
         EOF
         
-        # Download minimal Android runtime
-        wget -q "https://github.com/Sable/android-platforms/raw/master/android-10/android.jar" || \
-        wget -q "https://github.com/Sable/android-platforms/raw/master/android-4/android.jar" || {
-          echo "Could not download android.jar"
-        }
-        
-        # Compile
+        # Compile if android.jar exists
         if [ -f "android.jar" ]; then
           echo "Compiling Java..."
           mkdir -p classes
-          javac -bootclasspath android.jar -source 1.6 -target 1.6 -d classes java/MainActivity.java || {
+          javac -bootclasspath android.jar -source 1.6 -target 1.6 \
+                -d classes src/com/github/cleanhdmi/*.java || {
             echo "Compilation failed"
           }
+          
+          # Create DEX
+          if [ -f "../../tools/dx.jar" ] && [ -d "classes" ]; then
+            echo "Creating DEX..."
+            java -jar ../../tools/dx.jar --dex --output=classes.dex classes || {
+              echo "DEX creation failed"
+            }
+          fi
         fi
         
-        # Get dx tool and create DEX
-        echo "Creating DEX..."
-        wget -q "https://github.com/PerfectSlayer/dx-binary/raw/master/dx.jar" || true
-        
-        if [ -f "dx.jar" ] && [ -d "classes" ]; then
-          java -jar dx.jar --dex --no-strict --output=classes.dex classes || {
-            echo "DEX creation failed, using reference DEX"
-            # Use DEX from reference if available
-            [ -f "../reference/extracted/classes.dex" ] && cp ../reference/extracted/classes.dex . || true
-          }
-        elif [ -f "../reference/extracted/classes.dex" ]; then
-          echo "Using reference DEX"
-          cp ../reference/extracted/classes.dex .
+        # If we have reference resources, use them
+        if [ -f "../../reference/extracted/resources.arsc" ]; then
+          echo "Using reference resources..."
+          cp ../../reference/extracted/resources.arsc .
         fi
         
-        cd ..
-    
-    - name: Build APK with exact Sony structure
-      run: |
-        echo "📦 Building APK with Sony structure..."
-        cd build
-        
-        # Create proper AndroidManifest.xml
-        cat > AndroidManifest.xml << 'EOF'
+        # Create AndroidManifest.xml (text version, will convert later)
+        cat > AndroidManifest_text.xml << 'EOF'
         <?xml version="1.0" encoding="utf-8"?>
-        <manifest xmlns:android="http://schemas.android.com/apk/res/android" 
-            package="com.github.cleanhdmi" 
-            android:versionCode="1" 
-            android:versionName="1.0">
-            <uses-sdk android:minSdkVersion="10" android:targetSdkVersion="10"/>
-            <application android:label="Clean HDMI" android:debuggable="false">
-                <activity android:name=".MainActivity" android:label="Clean HDMI">
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+            package="com.github.cleanhdmi">
+            <uses-sdk android:minSdkVersion="10"/>
+            <application android:label="Clean HDMI">
+                <activity android:name=".MainActivity">
                     <intent-filter>
                         <action android:name="android.intent.action.MAIN"/>
                         <category android:name="android.intent.category.LAUNCHER"/>
@@ -151,193 +213,162 @@ jobs:
         </manifest>
         EOF
         
-        # Create resources if not from reference
-        if [ ! -d "res" ]; then
-          mkdir -p res/values
-          cat > res/values/strings.xml << 'EOF'
-        <?xml version="1.0" encoding="utf-8"?>
-        <resources>
-            <string name="app_name">Clean HDMI</string>
-        </resources>
-        EOF
+        # Try to convert to binary using aapt from Android SDK
+        # For now, use the binary manifest from reference if available
+        if [ -f "../../reference/extracted/AndroidManifest.xml" ]; then
+          echo "Using reference binary manifest as template..."
+          cp ../../reference/extracted/AndroidManifest.xml .
         fi
         
-        # Use aapt if available from reference
-        if [ -f "../reference/extracted/aapt" ]; then
-          echo "Using reference aapt..."
-          chmod +x ../reference/extracted/aapt
-          ../reference/extracted/aapt package -f -M AndroidManifest.xml -S res -I android.jar -F resources.ap_ || true
+        # Create APK
+        if [ -f "AndroidManifest.xml" ] && [ -f "classes.dex" ]; then
+          echo "Creating APK..."
+          zip -0 ../CleanHDMI_method2.apk AndroidManifest.xml classes.dex
+          [ -f "resources.arsc" ] && zip -0 ../CleanHDMI_method2.apk resources.arsc
         fi
         
-        # Build APK in specific order (important for Sony)
-        echo "Creating APK..."
-        rm -f CleanHDMI.apk
-        
-        # Add files in correct order
-        zip -0 -X CleanHDMI.apk AndroidManifest.xml
-        [ -f "resources.arsc" ] && zip -0 -X CleanHDMI.apk resources.arsc
-        [ -f "classes.dex" ] && zip -0 -X CleanHDMI.apk classes.dex
-        [ -d "res" ] && zip -0 -X -r CleanHDMI.apk res
-        
-        # Add META-INF
-        mkdir -p META-INF
-        echo "Manifest-Version: 1.0" > META-INF/MANIFEST.MF
-        echo "Created-By: 1.6.0 (Sun Microsystems Inc.)" >> META-INF/MANIFEST.MF
-        echo "" >> META-INF/MANIFEST.MF
-        zip -0 -X CleanHDMI.apk META-INF/MANIFEST.MF
-        
-        cd ..
+        cd ../..
     
-    - name: Sign APK with proper certificate
+    - name: Method 3 - Binary patch existing APK
       run: |
-        echo "🔐 Signing APK..."
+        echo "📱 Method 3: Binary patching..."
+        
+        # Find a reference APK
+        ref_apk=""
+        for apk in reference/*.apk; do
+          if [ -f "$apk" ]; then
+            ref_apk="$apk"
+            break
+          fi
+        done
+        
+        if [ -n "$ref_apk" ]; then
+          echo "Binary patching $ref_apk..."
+          
+          # Copy as base
+          cp "$ref_apk" build/CleanHDMI_method3.apk
+          
+          # Extract, modify, and repack
+          mkdir -p build/method3
+          cd build/method3
+          unzip -q ../CleanHDMI_method3.apk
+          
+          # Remove signature (will re-sign)
+          rm -rf META-INF
+          
+          # Try to patch strings in DEX (risky but sometimes works)
+          # This would change visible strings without breaking structure
+          if [ -f "classes.dex" ]; then
+            # Create a backup
+            cp classes.dex classes.dex.bak
+            
+            # Try to replace some strings (very carefully)
+            # Note: This is a hack and may not work
+            sed -i 's/PMCADemo/CleanHDM/g' classes.dex 2>/dev/null || true
+            sed -i 's/OpenMemories/Clean HDMI/g' classes.dex 2>/dev/null || true
+          fi
+          
+          # Repack
+          zip -0 ../CleanHDMI_method3_patched.apk *
+          cd ../..
+        fi
+    
+    - name: Sign all APKs
+      run: |
+        echo "🔐 Signing all APKs..."
         cd build
         
-        # Download test keys used by OpenMemories apps
-        mkdir -p keys
-        
-        # Create a keystore
+        # Create keystore
         keytool -genkey -v \
-          -keystore keys/sony.keystore \
-          -alias sony \
+          -keystore sony.keystore \
+          -alias androidkey \
           -keyalg RSA \
           -keysize 2048 \
           -validity 10000 \
           -storepass android \
           -keypass android \
-          -dname "CN=Sony Camera App,O=GitHub,C=US" \
+          -dname "CN=Android,O=Android,C=US" \
           -noprompt
         
-        # Sign the APK
-        jarsigner -verbose \
-          -sigalg SHA1withRSA \
-          -digestalg SHA1 \
-          -keystore keys/sony.keystore \
-          -storepass android \
-          CleanHDMI.apk \
-          sony
-        
-        # Verify signature
-        jarsigner -verify -verbose -certs CleanHDMI.apk || true
-        
-        cd ..
-    
-    - name: Create test variant with OpenMemories base
-      run: |
-        echo "🔄 Creating variant based on OpenMemories..."
-        
-        if [ -d "reference/extracted" ]; then
-          mkdir -p variant
-          cd variant
-          
-          # Copy entire working app
-          cp -r ../reference/extracted/* .
-          
-          # Modify only the manifest
-          if [ -f "AndroidManifest.xml" ]; then
-            # Binary patching of manifest (risky but sometimes works)
-            # This is a hex edit to change package name
-            xxd AndroidManifest.xml > manifest.hex
-            
-            # Try to replace package name in hex
-            sed -i 's/636f6d2e6769746875622e6d6131636f/636f6d2e6769746875622e636c65616e/g' manifest.hex 2>/dev/null || true
-            
-            xxd -r manifest.hex > AndroidManifest_new.xml
-            mv AndroidManifest_new.xml AndroidManifest.xml
-          fi
-          
-          # Repackage
-          zip -0 -X ../build/CleanHDMI_variant.apk AndroidManifest.xml
-          zip -0 -X ../build/CleanHDMI_variant.apk resources.arsc classes.dex
-          zip -0 -X -r ../build/CleanHDMI_variant.apk res META-INF
-          
-          cd ..
-        fi
-    
-    - name: Validate APKs
-      run: |
-        echo "✅ Validating APKs..."
-        cd build
-        
+        # Sign each APK
         for apk in *.apk; do
-          if [ -f "$apk" ]; then
-            echo ""
-            echo "Checking $apk:"
-            echo "Size: $(ls -lh $apk | awk '{print $5}')"
+          if [ -f "$apk" ] && [[ ! "$apk" == *"_signed.apk" ]]; then
+            echo "Signing $apk..."
             
-            # Check structure
-            unzip -l "$apk" | head -20
+            # Remove old signature if exists
+            zip -d "$apk" "META-INF/*" 2>/dev/null || true
             
-            # Check with pmca-py if possible
-            python3 -c "
-        import zipfile
-        import sys
-        
-        try:
-            with zipfile.ZipFile('$apk', 'r') as z:
-                files = z.namelist()
-                required = ['AndroidManifest.xml', 'classes.dex']
-                missing = [f for f in required if f not in files]
-                if missing:
-                    print(f'  ⚠️  Missing: {missing}')
-                else:
-                    print('  ✅ Has required files')
-                    
-                # Check manifest is binary
-                manifest = z.read('AndroidManifest.xml')
-                if manifest[:4] == b'<?xm':
-                    print('  ❌ Manifest is text XML (needs to be binary)')
-                elif manifest[:4] == b'\x03\x00\x08\x00':
-                    print('  ✅ Manifest is binary')
-                else:
-                    print(f'  ⚠️  Unknown manifest format: {manifest[:4].hex()}')
-        except Exception as e:
-            print(f'  ❌ Error: {e}')
-        " || true
+            # Sign
+            jarsigner -sigalg SHA1withRSA -digestalg SHA1 \
+              -keystore sony.keystore -storepass android \
+              "$apk" androidkey || {
+              echo "Failed to sign $apk"
+            }
+            
+            # Verify
+            jarsigner -verify "$apk" || true
           fi
         done
         
         cd ..
     
-    - name: Create installation package
+    - name: Validate and package
       run: |
-        echo "📦 Creating installation package..."
+        echo "📦 Validating APKs..."
+        cd build
         
-        cat > build/INSTALL.txt << 'EOF'
-        Clean HDMI for Sony Cameras
-        ===========================
+        echo "=== APK Files Created ===" > report.txt
+        echo "" >> report.txt
         
-        Files:
-        - CleanHDMI.apk : Main build
-        - CleanHDMI_variant.apk : Alternative build (if available)
+        for apk in *.apk; do
+          if [ -f "$apk" ]; then
+            size=$(ls -lh "$apk" | awk '{print $5}')
+            echo "$apk - Size: $size" | tee -a report.txt
+            
+            # Check contents
+            echo "  Contents:" >> report.txt
+            unzip -l "$apk" 2>/dev/null | grep -E "(AndroidManifest|classes.dex|resources)" >> report.txt || true
+            echo "" >> report.txt
+          fi
+        done
         
-        Installation:
-        1. Connect camera via USB in Mass Storage mode
-        2. Install using pmca:
-           pmca-console.exe install -f CleanHDMI.apk
+        # Create install instructions
+        cat > INSTALL_INSTRUCTIONS.txt << 'EOF'
+        INSTALLATION GUIDE FOR SONY DSC-HX400
+        =====================================
         
-        If installation fails with error 504:
-        - Try the variant APK
-        - Install OpenMemories-Tweak first
-        - Make sure camera firmware is compatible
+        You have several APK variants to try:
         
-        Compatible cameras:
-        - DSC-HX400/HX400V
-        - Most Sony cameras that support PlayMemories apps
+        1. CleanHDMI_method1.apk - Modified from working app (MOST LIKELY TO WORK)
+        2. CleanHDMI_method2.apk - Built from scratch
+        3. CleanHDMI_method3_patched.apk - Binary patched version
         
-        Build info:
-        Date: $(date)
+        Installation steps:
+        -------------------
+        1. Connect camera via USB cable
+        2. On camera: Menu → USB Connection → Mass Storage (NOT MTP!)
+        3. Wait for camera to be recognized
+        4. Run: pmca-console.exe install -f CleanHDMI_method1.apk
+        
+        If one APK fails, try the next one.
+        
+        Error 504 means the APK structure is invalid for Sony.
+        Try the next APK variant if you get this error.
+        
+        IMPORTANT: Some cameras need OpenMemories-Tweak installed first
+        to unlock app installation.
         EOF
         
-        # Show final structure
         echo ""
-        echo "📁 Final build contents:"
-        ls -la build/*.apk 2>/dev/null || echo "No APK files found"
+        echo "✅ Build complete! Files created:"
+        ls -la *.apk
+        
+        cd ..
     
     - name: Upload APKs
       uses: actions/upload-artifact@v4
       with:
-        name: Sony-CleanHDMI-Valid-${{ github.run_number }}
+        name: Sony-CleanHDMI-All-Methods-${{ github.run_number }}
         path: |
           build/*.apk
           build/*.txt

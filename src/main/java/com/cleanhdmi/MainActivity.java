@@ -79,19 +79,13 @@ public class MainActivity extends Activity {
     }
     
     private void setupControls() {
-        // Set up button handlers using anonymous inner classes (Java 7 compatible)
-        uiController.setOnMenuPressListener(new Runnable() {
-            @Override
-            public void run() {
-                toggleUI();
-            }
+        // Set up button handlers
+        uiController.setOnMenuPressListener(() -> {
+            toggleUI();
         });
         
-        uiController.setOnFnPressListener(new Runnable() {
-            @Override
-            public void run() {
-                cameraController.toggleFocusLock();
-            }
+        uiController.setOnFnPressListener(() -> {
+            cameraController.toggleFocusLock();
         });
     }
     

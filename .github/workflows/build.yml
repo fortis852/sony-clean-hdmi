@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-apk:
     runs-on: ubuntu-latest
     
     steps:
@@ -21,168 +21,62 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
     
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v3
+      with:
+        api-level: 19
+        build-tools: 34.0.0
+        target: android-19
+    
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-    
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-          sdk/
-        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
-        restore-keys: |
-          ${{ runner.os }}-gradle-
-    
-    - name: Create project structure
-      run: |
-        echo "📁 Creating project structure..."
-        mkdir -p sdk lib build gen docs tests
-        mkdir -p src/main/java/com/cleanhdmi
-        mkdir -p src/main/resources/{layout,values,drawable}
-        mkdir -p scripts
     
     - name: Install Python dependencies
       run: |
-        echo "📦 Installing Python dependencies..."
-        pip install --upgrade pip
-        pip install wheel setuptools
-        # pmca-py требует особой установки
-        pip install pyusb requests
-        # pip install pmca-py || echo "pmca-py installation skipped"
+        pip install Pillow
+        pip install pyusb requests pytest
     
-    - name: Download OpenMemories SDK
+    - name: Generate icons
       run: |
-        echo "📥 Downloading OpenMemories SDK..."
-        if [ ! -d "sdk/OpenMemories-Framework" ]; then
-          git clone https://github.com/ma1co/OpenMemories-Framework.git sdk/OpenMemories-Framework || echo "Framework clone skipped"
-        fi
+        python scripts/generate_icons.py || echo "Icon generation skipped"
     
-    - name: Compile Java sources
+    - name: Create keystore
       run: |
-        echo "☕ Compiling Java sources..."
-        # Проверяем наличие Java файлов
-        if find src/main/java -name "*.java" -type f | grep -q .; then
-          mkdir -p build/classes
-          find src/main/java -name "*.java" > sources.txt
-          javac -d build/classes @sources.txt || echo "Compilation skipped - no valid sources"
-        else
-          echo "No Java sources found, creating sample..."
-          mkdir -p src/main/java/com/cleanhdmi
-          cat > src/main/java/com/cleanhdmi/MainActivity.java << 'EOF'
-        package com.cleanhdmi;
-        public class MainActivity {
-            public static void main(String[] args) {
-                System.out.println("Clean HDMI App");
-            }
-        }
-        EOF
-          javac -d build/classes src/main/java/com/cleanhdmi/MainActivity.java
-        fi
+        mkdir -p keys
+        keytool -genkey -v \
+          -keystore keys/debug.keystore \
+          -storepass android \
+          -alias androiddebugkey \
+          -keypass android \
+          -keyalg RSA \
+          -keysize 2048 \
+          -validity 10000 \
+          -dname "CN=Android Debug,O=Android,C=US" \
+          -noprompt
     
-    - name: Create JAR file
+    - name: Build APK
       run: |
-        echo "📦 Creating JAR file..."
-        if [ -d "build/classes" ]; then
-          cd build/classes
-          jar cf ../CleanHDMI.jar .
-          cd ../..
-          echo "✅ JAR created: build/CleanHDMI.jar"
-        else
-          echo "No classes to package"
-          mkdir -p build
-          echo "Clean HDMI" > build/README.txt
-        fi
+        chmod +x scripts/build_apk.sh
+        ./scripts/build_apk.sh
+      env:
+        ANDROID_HOME: ${{ env.ANDROID_HOME }}
     
-    - name: Run tests
-      run: |
-        echo "🧪 Running tests..."
-        # Создаем простой тест если его нет
-        if [ ! -f "tests/test_basic.py" ]; then
-          mkdir -p tests
-          cat > tests/test_basic.py << 'EOF'
-        def test_basic():
-            assert True
-        EOF
-        fi
-        python -m pytest tests/ -v || echo "Tests skipped"
-    
-    - name: Create APK stub
-      run: |
-        echo "📱 Creating APK stub..."
-        # Пока создаем заглушку APK
-        mkdir -p build
-        echo "APK will be generated here" > build/CleanHDMI.apk.txt
-        
-    - name: Generate build info
-      run: |
-        echo "📄 Generating build info..."
-        cat > build/build-info.txt << EOF
-        Build Information
-        =================
-        Date: $(date)
-        Commit: ${{ github.sha }}
-        Branch: ${{ github.ref_name }}
-        Runner: ${{ runner.os }}
-        Java Version: $(java -version 2>&1 | head -n 1)
-        Python Version: $(python --version)
-        EOF
-        cat build/build-info.txt
-    
-    - name: Upload artifacts
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: clean-hdmi-build-${{ github.run_number }}
-        path: |
-          build/
-          !build/classes/
+        name: CleanHDMI-${{ github.run_number }}
+        path: build/apk/CleanHDMI.apk
         retention-days: 30
-        if-no-files-found: warn
     
-    - name: Upload test results
+    - name: Upload build logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results-${{ github.run_number }}
+        name: build-logs-${{ github.run_number }}
         path: |
-          tests/
-          *.log
+          build/**/*.log
+          build/**/*.txt
         retention-days: 7
         if-no-files-found: ignore
-    
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
-        draft: false
-        prerelease: false
-
-  code-quality:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Install linters
-      run: |
-        pip install pylint flake8 black
-    
-    - name: Check code style
-      run: |
-        echo "🎨 Checking code style..."
-        # Проверяем Python файлы если есть
-        find . -name "*.py" -type f | head -5 | xargs -r pylint --exit-zero
-        find . -name "*.py" -type f | head -5 | xargs -r flake8 --exit-zero

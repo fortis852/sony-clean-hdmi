@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Surface для отображения LiveView -->
+    <SurfaceView
+        android:id="@+id/surface_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Оверлей с управлением (скрываемый) -->
+    <LinearLayout
+        android:id="@+id/control_overlay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:orientation="vertical"
+        android:padding="10dp"
+        android:background="#80000000"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/status_ready"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="5dp">
+
+            <Button
+                android:id="@+id/btn_focus"
+                android:layout_width="80dp"
+                android:layout_height="40dp"
+                android:text="Focus"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btn_exposure"
+                android:layout_width="80dp"
+                android:layout_height="40dp"
+                android:text="Exp"
+                android:textSize="12sp"
+                android:layout_marginStart="5dp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Индикаторы состояния -->
+    <LinearLayout
+        android:id="@+id/indicators"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:orientation="horizontal"
+        android:padding="5dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/indicator_focus"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_focus" />
+
+        <ImageView
+            android:id="@+id/indicator_exposure"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_exposure"
+            android:layout_marginStart="5dp" />
+
+    </LinearLayout>
+
+</FrameLayout>

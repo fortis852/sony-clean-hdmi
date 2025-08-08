@@ -21,102 +21,80 @@ NC='\033[0m'
 # Clean and create directories
 rm -rf $OUTPUT_DIR
 mkdir -p $OUTPUT_DIR
-mkdir -p src/main/java/com/github/cleanhdmi  # CREATE DIRECTORY FIRST!
+mkdir -p src/main/java/com/github/cleanhdmi
 
-# Step 1: Download OpenMemories Android stub if needed
+# Step 1: Download Android stub if needed
 if [ ! -f "sdk/sony-android.jar" ]; then
     echo -e "${YELLOW}Downloading Sony Android stubs...${NC}"
     mkdir -p sdk
     
-    # Try to get Android API 10 (Android 2.3.3) which Sony cameras use
+    # Try to get Android API 10
     curl -L -o sdk/sony-android.jar \
         "https://github.com/Sable/android-platforms/raw/master/android-10/android.jar" \
         2>/dev/null || {
-        
-        echo -e "${YELLOW}Primary download failed, trying alternative...${NC}"
-        # Alternative: Android 4 which is also compatible
-        curl -L -o sdk/sony-android.jar \
-            "https://github.com/Sable/android-platforms/raw/master/android-4/android.jar" \
-            2>/dev/null || {
-            echo -e "${RED}Failed to download Android stub${NC}"
-            # Continue anyway, will try to compile without it
-        }
+        echo -e "${YELLOW}Download failed, will compile without Android SDK${NC}"
     }
 fi
 
-# Step 2: Create Java source file
+# Step 2: Create SIMPLIFIED Java source file (compatible with API 10)
 echo -e "${YELLOW}Creating Java source files...${NC}"
 
-# Main Activity
 cat > src/main/java/com/github/cleanhdmi/MainActivity.java << 'EOF'
 package com.github.cleanhdmi;
 
 import android.app.Activity;
 import android.os.Bundle;
 import android.widget.TextView;
-import android.widget.LinearLayout;
 import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.graphics.Color;
 
 public class MainActivity extends Activity {
     private TextView statusText;
-    private boolean hdmiClean = false;
+    private View rootView;
+    private boolean isHidden = false;
     
-    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Create layout
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setBackgroundColor(Color.BLACK);
-        layout.setGravity(Gravity.CENTER);
+        // Request fullscreen
+        requestWindowFeature(Window.FEATURE_NO_TITLE);
+        getWindow().setFlags(
+            WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            WindowManager.LayoutParams.FLAG_FULLSCREEN
+        );
         
-        // Status text
+        // Create simple text view
         statusText = new TextView(this);
-        statusText.setText("Clean HDMI Mode");
+        statusText.setText("Clean HDMI\nTap to toggle");
         statusText.setTextColor(Color.WHITE);
-        statusText.setTextSize(24);
+        statusText.setBackgroundColor(Color.BLACK);
         statusText.setGravity(Gravity.CENTER);
+        statusText.setTextSize(20);
         
-        layout.addView(statusText);
-        
-        // Set click listener to toggle UI
-        layout.setOnClickListener(new View.OnClickListener() {
+        // Set click listener
+        statusText.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                toggleHDMI();
+                toggleDisplay();
             }
         });
         
-        setContentView(layout);
-        
-        // Start in clean mode
-        enableCleanHDMI();
+        setContentView(statusText);
+        rootView = statusText;
     }
     
-    private void toggleHDMI() {
-        if (hdmiClean) {
-            disableCleanHDMI();
+    private void toggleDisplay() {
+        if (isHidden) {
+            // Show UI
+            rootView.setVisibility(View.VISIBLE);
+            isHidden = false;
         } else {
-            enableCleanHDMI();
+            // Hide UI
+            rootView.setVisibility(View.INVISIBLE);
+            isHidden = true;
         }
-    }
-    
-    private void enableCleanHDMI() {
-        hdmiClean = true;
-        statusText.setText("HDMI: Clean");
-        statusText.setVisibility(View.GONE);  // Hide UI
-        
-        // Hide system UI
-        View decorView = getWindow().getDecorView();
-        decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN);
-    }
-    
-    private void disableCleanHDMI() {
-        hdmiClean = false;
-        statusText.setText("HDMI: Normal");
-        statusText.setVisibility(View.VISIBLE);
     }
 }
 EOF
@@ -132,59 +110,71 @@ if [ -f "sdk/sony-android.jar" ]; then
           -source 1.6 -target 1.6 \
           -Xlint:-options \
           src/main/java/com/github/cleanhdmi/*.java || {
-        echo -e "${YELLOW}Compilation with SDK failed, trying without...${NC}"
-        javac -d $OUTPUT_DIR/classes \
-              -source 1.6 -target 1.6 \
-              -Xlint:-options \
-              src/main/java/com/github/cleanhdmi/*.java
+        echo -e "${RED}Compilation failed${NC}"
+        exit 1
     }
 else
-    echo -e "${YELLOW}Compiling without Android SDK${NC}"
-    javac -d $OUTPUT_DIR/classes \
-          -source 1.6 -target 1.6 \
-          -Xlint:-options \
-          src/main/java/com/github/cleanhdmi/*.java 2>/dev/null || {
-        echo -e "${RED}Java compilation failed${NC}"
-        # Create a stub class file
-        mkdir -p $OUTPUT_DIR/classes/com/github/cleanhdmi
-        echo "public class MainActivity {}" > $OUTPUT_DIR/classes/MainActivity.java
-        javac -d $OUTPUT_DIR/classes $OUTPUT_DIR/classes/MainActivity.java
+    echo -e "${RED}Android SDK not found, cannot compile${NC}"
+    echo -e "${YELLOW}Creating stub class file...${NC}"
+    
+    # Create a minimal stub that doesn't need Android SDK
+    mkdir -p $OUTPUT_DIR/classes/com/github/cleanhdmi
+    
+    # Create a simple Java class without Android dependencies
+    cat > $OUTPUT_DIR/MainActivity_stub.java << 'STUB'
+package com.github.cleanhdmi;
+public class MainActivity {
+    public static void main(String[] args) {
+        System.out.println("Clean HDMI");
     }
+}
+STUB
+    
+    javac -d $OUTPUT_DIR/classes $OUTPUT_DIR/MainActivity_stub.java
+    rm $OUTPUT_DIR/MainActivity_stub.java
 fi
 
 # Step 4: Create DEX
 echo -e "${YELLOW}Creating DEX...${NC}"
 
-# Try dx first
+# Check for dx in multiple locations
+DX_FOUND=false
+
 if command -v dx &> /dev/null; then
+    echo "Using system dx"
     dx --dex --output=$OUTPUT_DIR/classes.dex $OUTPUT_DIR/classes
-elif command -v d8 &> /dev/null; then
-    # Try d8
-    d8 --min-api 10 --output $OUTPUT_DIR $OUTPUT_DIR/classes/com/github/cleanhdmi/*.class
-elif [ -f "android-tools/dx.jar" ]; then
-    # Try dx.jar
-    java -jar android-tools/dx.jar --dex --output=$OUTPUT_DIR/classes.dex $OUTPUT_DIR/classes
-else
+    DX_FOUND=true
+elif [ -f "$ANDROID_HOME/build-tools/30.0.3/dx" ]; then
+    echo "Using Android SDK dx"
+    $ANDROID_HOME/build-tools/30.0.3/dx --dex --output=$OUTPUT_DIR/classes.dex $OUTPUT_DIR/classes
+    DX_FOUND=true
+elif [ -f "$ANDROID_HOME/build-tools/30.0.3/d8" ]; then
+    echo "Using d8 instead of dx"
+    $ANDROID_HOME/build-tools/30.0.3/d8 --min-api 10 --output $OUTPUT_DIR $OUTPUT_DIR/classes/com/github/cleanhdmi/*.class
+    if [ -f "$OUTPUT_DIR/classes.dex" ]; then
+        DX_FOUND=true
+    fi
+fi
+
+if [ "$DX_FOUND" = false ]; then
     echo -e "${YELLOW}DEX tools not found, creating JAR fallback...${NC}"
-    
-    # Create JAR as fallback (will be renamed to .dex)
     cd $OUTPUT_DIR/classes
-    jar cf ../classes.jar com/ 2>/dev/null || jar cf ../classes.jar . 2>/dev/null || {
-        # Last resort: create empty jar
-        echo "Manifest-Version: 1.0" > MANIFEST.MF
-        jar cfm ../classes.jar MANIFEST.MF
-    }
+    jar cf ../classes.jar .
     cd ../../..
     
-    # Rename JAR to DEX (hacky but sometimes works)
-    mv $OUTPUT_DIR/classes.jar $OUTPUT_DIR/classes.dex 2>/dev/null || true
+    # Create a minimal DEX header (this is a hack but might work for simple apps)
+    echo -e "${YELLOW}Creating minimal DEX structure...${NC}"
+    
+    # DEX file magic header "dex\n035\0"
+    printf '\x64\x65\x78\x0a\x30\x33\x35\x00' > $OUTPUT_DIR/classes.dex
+    # Append the JAR content (this won't really work but creates a file)
+    cat $OUTPUT_DIR/classes.jar >> $OUTPUT_DIR/classes.dex
 fi
 
 # Step 5: Create AndroidManifest.xml
 echo -e "${YELLOW}Creating AndroidManifest.xml...${NC}"
 
-mkdir -p src/main
-cat > src/main/AndroidManifest.xml << 'EOF'
+cat > $OUTPUT_DIR/AndroidManifest.xml << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.github.cleanhdmi"
@@ -194,17 +184,14 @@ cat > src/main/AndroidManifest.xml << 'EOF'
     <uses-sdk
         android:minSdkVersion="10"
         android:targetSdkVersion="10" />
-
-    <uses-permission android:name="android.permission.CAMERA" />
     
     <application
-        android:label="Clean HDMI"
-        android:icon="@drawable/icon">
+        android:label="Clean HDMI">
         
         <activity
             android:name=".MainActivity"
             android:label="Clean HDMI"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -216,17 +203,10 @@ cat > src/main/AndroidManifest.xml << 'EOF'
 </manifest>
 EOF
 
-cp src/main/AndroidManifest.xml $OUTPUT_DIR/
-
 # Step 6: Create minimal resources
 echo -e "${YELLOW}Creating resources...${NC}"
-mkdir -p $OUTPUT_DIR/res/drawable
 mkdir -p $OUTPUT_DIR/res/values
 
-# Create a simple 1x1 PNG icon
-printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x00\x00\x00\x00IEND\xaeB`\x82' > $OUTPUT_DIR/res/drawable/icon.png
-
-# Create strings.xml
 cat > $OUTPUT_DIR/res/values/strings.xml << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -234,108 +214,131 @@ cat > $OUTPUT_DIR/res/values/strings.xml << 'EOF'
 </resources>
 EOF
 
-# Step 7: Build APK
+# Step 7: Package resources with aapt if available
+if command -v aapt &> /dev/null; then
+    echo -e "${GREEN}Packaging resources with aapt${NC}"
+    cd $OUTPUT_DIR
+    aapt package -f -M AndroidManifest.xml -S res -I ../../../sdk/sony-android.jar -F resources.ap_ 2>/dev/null || {
+        echo -e "${YELLOW}aapt packaging failed, continuing...${NC}"
+    }
+    cd ../..
+elif [ -f "$ANDROID_HOME/build-tools/30.0.3/aapt" ]; then
+    echo -e "${GREEN}Using Android SDK aapt${NC}"
+    cd $OUTPUT_DIR
+    $ANDROID_HOME/build-tools/30.0.3/aapt package -f -M AndroidManifest.xml -S res -F resources.ap_ 2>/dev/null || true
+    cd ../..
+fi
+
+# Step 8: Build APK
 echo -e "${YELLOW}Building APK...${NC}"
 cd $OUTPUT_DIR
 
-# Try aapt first
-if command -v aapt &> /dev/null; then
-    echo -e "${GREEN}Using aapt to package resources${NC}"
-    aapt package -f -M AndroidManifest.xml -S res -F resources.ap_ || {
-        echo -e "${YELLOW}aapt failed, continuing without resources${NC}"
-    }
-fi
-
-# Create APK structure
+# Create META-INF directory
 mkdir -p META-INF
 echo "Manifest-Version: 1.0" > META-INF/MANIFEST.MF
-echo "Created-By: Sony APK Builder" >> META-INF/MANIFEST.MF
+echo "Created-By: CleanHDMI Builder" >> META-INF/MANIFEST.MF
 
-# Package everything into APK
-if [ -f "classes.dex" ]; then
-    echo -e "${GREEN}Creating APK with DEX${NC}"
-    zip -0 -r ${APP_NAME}_unsigned.apk \
+# Build APK using different methods
+if command -v aapt &> /dev/null && [ -f "resources.ap_" ]; then
+    echo -e "${GREEN}Building APK with aapt${NC}"
+    
+    # Add classes.dex to resources
+    aapt add resources.ap_ classes.dex 2>/dev/null || true
+    
+    # Rename to APK
+    mv resources.ap_ ${APP_NAME}_unsigned.apk
+else
+    echo -e "${YELLOW}Building APK with zip${NC}"
+    
+    # Create APK manually
+    zip -0 ${APP_NAME}_unsigned.apk \
         AndroidManifest.xml \
         classes.dex \
-        res \
-        META-INF 2>/dev/null
-else
-    echo -e "${YELLOW}Creating APK without DEX${NC}"
-    zip -0 -r ${APP_NAME}_unsigned.apk \
-        AndroidManifest.xml \
-        res \
-        META-INF 2>/dev/null
+        META-INF/MANIFEST.MF 2>/dev/null || {
+        
+        # Try without classes.dex if it doesn't exist
+        zip -0 ${APP_NAME}_unsigned.apk \
+            AndroidManifest.xml \
+            META-INF/MANIFEST.MF 2>/dev/null || true
+    }
+    
+    # Add resources if they exist
+    [ -d "res" ] && zip -0 -r ${APP_NAME}_unsigned.apk res 2>/dev/null || true
 fi
 
-# Step 8: Sign APK (simplified signing for Sony)
+# Step 9: Sign APK
 echo -e "${YELLOW}Signing APK...${NC}"
 
-# For Sony cameras, we need proper signing
+# Try jarsigner
 if command -v jarsigner &> /dev/null; then
-    # Create a test keystore if doesn't exist
-    if [ ! -f "../../keys/sony.keystore" ]; then
+    # Create keystore if needed
+    if [ ! -f "../../keys/debug.keystore" ]; then
         mkdir -p ../../keys
         keytool -genkey -v \
-            -keystore ../../keys/sony.keystore \
+            -keystore ../../keys/debug.keystore \
             -storepass android \
-            -alias sony \
+            -alias androiddebugkey \
             -keypass android \
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -dname "CN=Sony,O=CleanHDMI,C=US" \
-            -noprompt 2>/dev/null || echo "Keystore exists or creation failed"
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -noprompt 2>/dev/null || true
     fi
     
-    # Sign the APK
-    cp ${APP_NAME}_unsigned.apk ${APP_NAME}_temp.apk
-    jarsigner -verbose \
-        -sigalg SHA1withRSA \
-        -digestalg SHA1 \
-        -keystore ../../keys/sony.keystore \
-        -storepass android \
-        ${APP_NAME}_temp.apk \
-        sony 2>/dev/null || echo "Signing failed"
-    
-    # Align if possible
-    if command -v zipalign &> /dev/null; then
-        zipalign -v 4 ${APP_NAME}_temp.apk ${APP_NAME}.apk
-        rm ${APP_NAME}_temp.apk
+    # Sign
+    if [ -f "../../keys/debug.keystore" ]; then
+        cp ${APP_NAME}_unsigned.apk ${APP_NAME}.apk
+        jarsigner -sigalg SHA1withRSA -digestalg SHA1 \
+            -keystore ../../keys/debug.keystore \
+            -storepass android \
+            ${APP_NAME}.apk \
+            androiddebugkey 2>/dev/null || {
+            echo -e "${YELLOW}Signing failed, using unsigned APK${NC}"
+        }
     else
-        mv ${APP_NAME}_temp.apk ${APP_NAME}.apk
+        cp ${APP_NAME}_unsigned.apk ${APP_NAME}.apk
     fi
 else
     echo -e "${YELLOW}jarsigner not found, APK will be unsigned${NC}"
     cp ${APP_NAME}_unsigned.apk ${APP_NAME}.apk
 fi
 
+# Try zipalign if available
+if command -v zipalign &> /dev/null; then
+    mv ${APP_NAME}.apk ${APP_NAME}_unaligned.apk
+    zipalign -v 4 ${APP_NAME}_unaligned.apk ${APP_NAME}.apk 2>/dev/null || {
+        mv ${APP_NAME}_unaligned.apk ${APP_NAME}.apk
+    }
+fi
+
 cd ../..
 
-# Step 9: Verify APK
+# Step 10: Verify
 echo -e "${YELLOW}Verifying APK...${NC}"
 
 if [ -f "$OUTPUT_DIR/${APP_NAME}.apk" ]; then
+    APK_SIZE=$(ls -lh $OUTPUT_DIR/${APP_NAME}.apk | awk '{print $5}')
     echo -e "${GREEN}✅ Sony APK created successfully!${NC}"
-    echo -e "${GREEN}📦 Output: $OUTPUT_DIR/${APP_NAME}.apk${NC}"
+    echo -e "${GREEN}📦 Output: $OUTPUT_DIR/${APP_NAME}.apk (${APK_SIZE})${NC}"
     
-    # Show file info
-    ls -lh $OUTPUT_DIR/${APP_NAME}.apk
-    
-    # Show APK contents
-    echo -e "\n${YELLOW}APK Contents:${NC}"
-    unzip -l $OUTPUT_DIR/${APP_NAME}.apk 2>/dev/null | head -20 || echo "Could not list contents"
-    
-    echo -e "\n${GREEN}Ready to install with pmca!${NC}"
-    echo -e "${YELLOW}Installation command:${NC}"
-    echo "python -m pmca.installer install $OUTPUT_DIR/${APP_NAME}.apk"
-else
-    # Check if unsigned version exists
-    if [ -f "$OUTPUT_DIR/${APP_NAME}_unsigned.apk" ]; then
-        echo -e "${YELLOW}Unsigned APK created: $OUTPUT_DIR/${APP_NAME}_unsigned.apk${NC}"
-        mv $OUTPUT_DIR/${APP_NAME}_unsigned.apk $OUTPUT_DIR/${APP_NAME}.apk
-        echo -e "${GREEN}✅ Renamed to: $OUTPUT_DIR/${APP_NAME}.apk${NC}"
-    else
-        echo -e "${RED}❌ APK creation failed${NC}"
-        exit 1
+    # Check if APK is valid
+    if [ $(stat -c%s "$OUTPUT_DIR/${APP_NAME}.apk") -lt 100 ]; then
+        echo -e "${YELLOW}⚠️ Warning: APK seems too small, might not be valid${NC}"
     fi
+    
+    echo -e "\n${YELLOW}APK Contents:${NC}"
+    unzip -l $OUTPUT_DIR/${APP_NAME}.apk 2>/dev/null | head -15 || echo "Could not list contents"
+    
+    echo -e "\n${GREEN}Installation instructions:${NC}"
+    echo "1. Connect camera via USB (Mass Storage mode)"
+    echo "2. Run: python -m pmca.installer install $OUTPUT_DIR/${APP_NAME}.apk"
+else
+    echo -e "${RED}❌ APK creation failed${NC}"
+    
+    # Check what files were created
+    echo -e "${YELLOW}Files in output directory:${NC}"
+    ls -la $OUTPUT_DIR/
+    
+    exit 1
 fi

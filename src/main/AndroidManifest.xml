@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.cleanhdmi"
+    android:versionCode="1"
+    android:versionName="1.0.0">
+
+    <!-- Минимальная версия API для Sony камер -->
+    <uses-sdk
+        android:minSdkVersion="10"
+        android:targetSdkVersion="19" />
+
+    <!-- Разрешения для камеры -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    
+    <!-- Sony-специфичные разрешения -->
+    <uses-permission android:name="com.sony.scalar.hardware.CAMERA" />
+    <uses-permission android:name="com.sony.scalar.media.LIVEVIEW" />
+    <uses-permission android:name="com.sony.scalar.hardware.HDMI" />
+
+    <!-- Требования к железу -->
+    <uses-feature android:name="android.hardware.camera" android:required="true" />
+    <uses-feature android:name="android.hardware.camera.autofocus" />
+
+    <application
+        android:label="Clean HDMI"
+        android:icon="@drawable/ic_launcher"
+        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+        android:allowBackup="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:label="Clean HDMI"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|screenSize"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Сервис для управления камерой -->
+        <service
+            android:name=".CameraService"
+            android:enabled="true"
+            android:exported="false" />
+
+    </application>
+
+</manifest>

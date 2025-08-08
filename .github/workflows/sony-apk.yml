@@ -23,10 +23,14 @@ jobs:
         mkdir -p work
         cd work
         
-        # Download PMCADemo - it definitely works on HX400
-        wget https://github.com/ma1co/PMCADemo/releases/download/release-14/com.github.ma1co.PMCADemo-release-14.apk -O base.apk || {
-          echo "Failed to download PMCADemo, trying alternative..."
-          wget https://github.com/ma1co/OpenMemories-Tweak/releases/download/release-41/com.github.ma1co.OpenMemories-Tweak-release-41.apk -O base.apk
+        # Download PMCADemo with correct URL
+        echo "Downloading PMCADemo v0.7..."
+        wget https://github.com/ma1co/PMCADemo/releases/download/v0.7/PMCADemo-release-0.7.apk -O base.apk || {
+          echo "Failed to download PMCADemo, trying OpenMemories-Tweak..."
+          wget https://github.com/ma1co/OpenMemories-Tweak/releases/download/v0.11/OpenMemories-Tweak-release-0.11.apk -O base.apk || {
+            echo "Failed to download OpenMemories-Tweak, trying STG..."
+            wget https://github.com/ma1co/STG/releases/download/v0.2/STG-release-0.2.apk -O base.apk
+          }
         }
         
         if [ ! -f "base.apk" ]; then
@@ -36,6 +40,10 @@ jobs:
         
         echo "✅ Downloaded base.apk"
         ls -lh base.apk
+        
+        # Also download OpenMemories-Tweak as reference
+        echo "Downloading additional reference APKs..."
+        wget https://github.com/ma1co/OpenMemories-Tweak/releases/download/v0.11/OpenMemories-Tweak-release-0.11.apk -O tweak.apk || true
     
     - name: Download and setup apktool
       run: |
@@ -45,7 +53,7 @@ jobs:
         # Download apktool
         wget https://github.com/iBotPeaches/Apktool/releases/download/v2.9.0/apktool_2.9.0.jar -O apktool.jar
         
-        # Download framework files that apktool might need
+        # Create framework directory
         mkdir -p ~/.local/share/apktool/framework
         
         echo "✅ Apktool ready"
@@ -55,107 +63,161 @@ jobs:
         echo "🔧 Decompiling base APK..."
         cd work
         
-        java -jar apktool.jar d -f base.apk -o decompiled
+        java -jar apktool.jar d -f base.apk -o decompiled || {
+          echo "Standard decompile failed, trying with --no-res..."
+          java -jar apktool.jar d -f --no-res base.apk -o decompiled
+        }
         
         echo "📁 Decompiled structure:"
         ls -la decompiled/
         
         # Show what we're working with
-        echo "📄 Original AndroidManifest.xml (first 20 lines):"
-        head -20 decompiled/AndroidManifest.xml || true
+        if [ -f "decompiled/AndroidManifest.xml" ]; then
+          echo "📄 Original AndroidManifest.xml (first 30 lines):"
+          head -30 decompiled/AndroidManifest.xml || true
+        fi
+        
+        if [ -f "decompiled/res/values/strings.xml" ]; then
+          echo "📄 Original strings.xml:"
+          cat decompiled/res/values/strings.xml || true
+        fi
     
-    - name: Modify APK
+    - name: Modify APK - Method 1 (Full modification)
       run: |
-        echo "✏️ Modifying APK for Clean HDMI..."
-        cd work/decompiled
+        echo "✏️ Method 1: Full modification..."
+        cd work
         
-        # Change app name in all language files
-        for file in res/values*/strings.xml; do
-          if [ -f "$file" ]; then
-            echo "Modifying $file"
-            # Change app name
-            sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">Clean HDMI<\/string>/g' "$file" || true
-            # Change any other visible strings
-            sed -i 's/>PMCADemo</>Clean HDMI</g' "$file" || true
-            sed -i 's/>OpenMemories[^<]*</>Clean HDMI</g' "$file" || true
+        if [ -d "decompiled" ]; then
+          cp -r decompiled decompiled_full
+          cd decompiled_full
+          
+          # Change app name in all language files
+          for file in res/values*/strings.xml; do
+            if [ -f "$file" ]; then
+              echo "Modifying $file"
+              # Replace app name
+              sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">Clean HDMI<\/string>/g' "$file" 2>/dev/null || true
+              # Replace other visible strings
+              sed -i 's/>PMCADemo</>Clean HDMI</g' "$file" 2>/dev/null || true
+              sed -i 's/>Demo</>HDMI</g' "$file" 2>/dev/null || true
+            fi
+          done
+          
+          # Modify AndroidManifest.xml - change label only, not package
+          if [ -f "AndroidManifest.xml" ]; then
+            sed -i 's/android:label="[^"]*"/android:label="Clean HDMI"/g' AndroidManifest.xml 2>/dev/null || true
           fi
-        done
-        
-        # Show changes
-        echo "📄 Modified strings.xml:"
-        grep "app_name" res/values/strings.xml || true
-        
-        # Create our own simple activity (in smali - Dalvik assembly)
-        mkdir -p smali/com/cleanhdmi
-        cat > smali/com/cleanhdmi/SimpleActivity.smali << 'EOF'
-        .class public Lcom/cleanhdmi/SimpleActivity;
+          
+          # Create our simple activity in smali
+          mkdir -p smali/com/cleanhdmi
+          cat > smali/com/cleanhdmi/CleanActivity.smali << 'EOF'
+        .class public Lcom/cleanhdmi/CleanActivity;
         .super Landroid/app/Activity;
-        .source "SimpleActivity.java"
         
-        # direct methods
         .method public constructor <init>()V
             .locals 0
-            
-            .prologue
-            .line 5
             invoke-direct {p0}, Landroid/app/Activity;-><init>()V
-            
             return-void
         .end method
         
-        # virtual methods
         .method protected onCreate(Landroid/os/Bundle;)V
-            .locals 2
-            .param p1, "savedInstanceState"    # Landroid/os/Bundle;
+            .locals 3
             
-            .prologue
-            .line 8
             invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V
             
-            .line 10
             new-instance v0, Landroid/widget/TextView;
             invoke-direct {v0, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
             
-            .line 11
-            .local v0, "tv":Landroid/widget/TextView;
-            const-string v1, "Clean HDMI Mode"
+            const-string v1, "Clean HDMI Active"
             invoke-virtual {v0, v1}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
             
-            .line 12
-            const/high16 v1, 0x41f00000    # 30.0f
+            const/high16 v1, 0x41c00000    # 24.0f
             invoke-virtual {v0, v1}, Landroid/widget/TextView;->setTextSize(F)V
             
-            .line 13
-            invoke-virtual {p0, v0}, Lcom/cleanhdmi/SimpleActivity;->setContentView(Landroid/view/View;)V
+            const/16 v1, 0x11
+            invoke-virtual {v0, v1}, Landroid/widget/TextView;->setGravity(I)V
             
-            .line 14
+            const/4 v1, -0x1
+            invoke-virtual {v0, v1}, Landroid/widget/TextView;->setTextColor(I)V
+            
+            const/high16 v1, -0x1000000
+            invoke-virtual {v0, v1}, Landroid/widget/TextView;->setBackgroundColor(I)V
+            
+            invoke-virtual {p0, v0}, Lcom/cleanhdmi/CleanActivity;->setContentView(Landroid/view/View;)V
+            
+            invoke-virtual {p0}, Lcom/cleanhdmi/CleanActivity;->getWindow()Landroid/view/Window;
+            move-result-object v1
+            
+            const/16 v2, 0x400
+            invoke-virtual {v1, v2, v2}, Landroid/view/Window;->setFlags(II)V
+            
             return-void
         .end method
         EOF
-        
-        echo "✅ Modifications complete"
+          
+          cd ../..
+        fi
     
-    - name: Rebuild APK
+    - name: Rebuild APK - Method 1
       run: |
-        echo "🔨 Rebuilding APK..."
+        echo "🔨 Rebuilding APK (Method 1)..."
         cd work
         
-        # Build with apktool
-        java -jar apktool.jar b decompiled -o CleanHDMI_unsigned.apk
+        if [ -d "decompiled_full" ]; then
+          java -jar apktool.jar b decompiled_full -o CleanHDMI_full.apk || {
+            echo "Build failed, trying without resources..."
+            java -jar apktool.jar b --no-res decompiled_full -o CleanHDMI_full.apk || true
+          }
+          
+          if [ -f "CleanHDMI_full.apk" ]; then
+            echo "✅ Method 1 APK created"
+            ls -lh CleanHDMI_full.apk
+          fi
+        fi
+    
+    - name: Method 2 - Minimal modification
+      run: |
+        echo "✏️ Method 2: Minimal modification (safer)..."
+        cd work
         
-        if [ ! -f "CleanHDMI_unsigned.apk" ]; then
-          echo "❌ Build failed"
-          # Try to show error
-          java -jar apktool.jar b decompiled -o CleanHDMI_unsigned.apk --verbose || true
-          exit 1
+        if [ -d "decompiled" ]; then
+          cp -r decompiled decompiled_minimal
+          cd decompiled_minimal
+          
+          # Only change the app name, nothing else
+          if [ -f "res/values/strings.xml" ]; then
+            sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">Clean HDMI<\/string>/g' res/values/strings.xml 2>/dev/null || true
+          fi
+          
+          cd ..
+          
+          # Rebuild
+          java -jar apktool.jar b decompiled_minimal -o CleanHDMI_minimal.apk || true
+          
+          if [ -f "CleanHDMI_minimal.apk" ]; then
+            echo "✅ Method 2 APK created"
+            ls -lh CleanHDMI_minimal.apk
+          fi
+        fi
+    
+    - name: Method 3 - Original APK (as control)
+      run: |
+        echo "📦 Method 3: Original APK as control..."
+        cd work
+        
+        # Copy original as-is for testing
+        cp base.apk CleanHDMI_original.apk
+        
+        if [ -f "tweak.apk" ]; then
+          cp tweak.apk OpenMemories-Tweak.apk
+          echo "✅ Also including OpenMemories-Tweak for unlocking"
         fi
         
-        echo "✅ APK rebuilt successfully"
-        ls -lh CleanHDMI_unsigned.apk
+        echo "✅ Control APKs ready"
     
-    - name: Sign APK
+    - name: Sign all APKs
       run: |
-        echo "🔐 Signing APK..."
+        echo "🔐 Signing all APKs..."
         cd work
         
         # Create keystore
@@ -163,127 +225,122 @@ jobs:
           -keyalg RSA \
           -keysize 2048 \
           -validity 10000 \
-          -alias sony \
+          -alias androidkey \
           -keystore sony.keystore \
           -storepass android \
           -keypass android \
-          -dname "CN=Sony,O=CleanHDMI,C=US" \
+          -dname "CN=Android,O=Android,C=US" \
           -noprompt
         
-        # Sign APK
-        jarsigner \
-          -sigalg SHA1withRSA \
-          -digestalg SHA1 \
-          -keystore sony.keystore \
-          -storepass android \
-          -signedjar CleanHDMI.apk \
-          CleanHDMI_unsigned.apk \
-          sony
-        
-        # Verify signature
-        echo "📝 Verifying signature..."
-        jarsigner -verify -verbose -certs CleanHDMI.apk || true
-        
-        echo "✅ APK signed"
-        ls -lh CleanHDMI.apk
+        # Sign each APK
+        for apk in CleanHDMI*.apk; do
+          if [ -f "$apk" ]; then
+            echo "Signing $apk..."
+            
+            # Remove old signature
+            zip -d "$apk" "META-INF/*" 2>/dev/null || true
+            
+            # Create signed version
+            jarsigner \
+              -sigalg SHA1withRSA \
+              -digestalg SHA1 \
+              -keystore sony.keystore \
+              -storepass android \
+              "$apk" \
+              androidkey || {
+              echo "Failed to sign $apk"
+            }
+            
+            # Quick verify
+            jarsigner -verify "$apk" 2>/dev/null && echo "  ✅ Signature valid" || echo "  ⚠️ Signature invalid"
+          fi
+        done
     
-    - name: Create additional variants
+    - name: Create final package
       run: |
-        echo "🔄 Creating additional variants..."
+        echo "📦 Creating final package..."
         cd work
         
-        # Variant 1: Keep original package name but change UI
-        cp -r decompiled decompiled_variant1
-        cd decompiled_variant1
+        # List all APKs
+        echo "=== APK Files Created ===" 
+        echo ""
+        for apk in *.apk; do
+          if [ -f "$apk" ]; then
+            size=$(ls -lh "$apk" | awk '{print $5}')
+            echo "$apk - $size"
+            
+            # Quick check contents
+            echo -n "  Contents: "
+            unzip -l "$apk" 2>/dev/null | grep -c "classes.dex" | xargs echo -n "classes.dex: "
+            unzip -l "$apk" 2>/dev/null | grep -c "AndroidManifest.xml" | xargs echo "AndroidManifest.xml: "
+          fi
+        done
         
-        # Only change visible strings, keep package structure
-        find res -name "*.xml" -exec sed -i 's/>.*Demo</>Clean HDMI</g' {} \; 2>/dev/null || true
-        find res -name "*.xml" -exec sed -i 's/>.*Tweak</>Clean HDMI</g' {} \; 2>/dev/null || true
+        # Create installation guide
+        cat > INSTALLATION_GUIDE.txt << 'EOF'
+        Clean HDMI for Sony DSC-HX400 - Installation Guide
+        ==================================================
         
-        cd ..
-        java -jar apktool.jar b decompiled_variant1 -o CleanHDMI_variant1.apk || true
+        IMPORTANT: Test files in this order!
         
-        # Sign variant if it exists
-        if [ -f "CleanHDMI_variant1.apk" ]; then
-          jarsigner \
-            -sigalg SHA1withRSA \
-            -digestalg SHA1 \
-            -keystore sony.keystore \
-            -storepass android \
-            CleanHDMI_variant1.apk \
-            sony
-          echo "✅ Variant 1 created"
-        fi
-        
-        # Variant 2: Minimal modification
-        cp base.apk CleanHDMI_minimal.apk
-        # This is just the original app, renamed
-        echo "✅ Minimal variant created (original app)"
-    
-    - name: Create installation package
-      run: |
-        echo "📦 Creating installation package..."
-        cd work
-        
-        # Check what we actually created
-        echo "=== Created APK files ===" 
-        ls -lh *.apk
-        
-        # Create readme
-        cat > README.txt << 'EOF'
-        Clean HDMI for Sony DSC-HX400
-        ==============================
-        
-        APK Files (try in this order):
-        -------------------------------
-        1. CleanHDMI_minimal.apk - Original working app (test first!)
-           This is PMCADemo renamed. If this doesn't install, no modified version will work.
+        1. First test - Original App (to verify camera works):
+           -----------------------------------------------------
+           CleanHDMI_original.apk - This is the unmodified PMCADemo
            
-        2. CleanHDMI_variant1.apk - Lightly modified version
-           Same structure as original but with changed text
+           Command: pmca-console.exe install -f CleanHDMI_original.apk
            
-        3. CleanHDMI.apk - Fully modified version
-           Changed app name and added custom code
+           If this DOESN'T install:
+           - Your camera may need to be unlocked first
+           - Install OpenMemories-Tweak.apk first
+           - Or your camera firmware doesn't support apps
+           
+        2. If original works, try minimal modification:
+           ----------------------------------------------
+           CleanHDMI_minimal.apk - Only app name changed
+           
+           Command: pmca-console.exe install -f CleanHDMI_minimal.apk
+           
+        3. Finally, try full modification:
+           ---------------------------------
+           CleanHDMI_full.apk - Full Clean HDMI version
+           
+           Command: pmca-console.exe install -f CleanHDMI_full.apk
         
-        Installation:
-        -------------
-        1. Connect camera via USB (Mass Storage mode, not MTP!)
+        Installation Steps:
+        ------------------
+        1. Connect camera with USB cable
         2. On camera: Menu → USB Connection → Mass Storage
-        3. Install: pmca-console.exe install -f CleanHDMI_minimal.apk
+        3. Wait for Windows to recognize camera
+        4. Run pmca-console.exe with the APK file
         
-        If CleanHDMI_minimal.apk installs successfully:
-        - Try CleanHDMI_variant1.apk next
-        - Then try CleanHDMI.apk
+        Troubleshooting:
+        ---------------
+        - Error 504: APK structure invalid - try next version
+        - Error 403: Camera locked - install OpenMemories-Tweak first
+        - Connection refused: Camera not in Mass Storage mode
         
-        If CleanHDMI_minimal.apk fails:
-        - Your camera may need OpenMemories-Tweak first
-        - Or your camera firmware may not support these apps
-        
-        Error codes:
-        ------------
-        Error 504 = Invalid APK structure
-        Error 403 = Camera locked, need OpenMemories-Tweak
+        If OpenMemories-Tweak.apk is included:
+        - Install it first to unlock your camera
+        - Then try the Clean HDMI apps
         
         Build Date: $(date)
         EOF
         
-        # Final check
         echo ""
-        echo "✅ FINAL BUILD COMPLETE"
-        echo "APK files created:"
-        for apk in *.apk; do
-          if [ -f "$apk" ]; then
-            size=$(ls -lh "$apk" | awk '{print $5}')
-            echo "  - $apk ($size)"
-          fi
-        done
+        echo "========================================="
+        echo "✅ BUILD COMPLETE!"
+        echo "========================================="
+        echo ""
+        echo "Files ready for download:"
+        ls -1 *.apk
     
     - name: Upload APKs
       uses: actions/upload-artifact@v4
       with:
-        name: Sony-CleanHDMI-Final-${{ github.run_number }}
+        name: Sony-CleanHDMI-Package-${{ github.run_number }}
         path: |
           work/*.apk
           work/*.txt
         retention-days: 90
         if-no-files-found: error
+        

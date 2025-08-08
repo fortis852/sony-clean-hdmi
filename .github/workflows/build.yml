@@ -198,7 +198,6 @@ jobs:
 
   build-sony-apk:
     runs-on: ubuntu-latest
-    needs: build-apk
     
     steps:
     - name: Checkout code
@@ -210,81 +209,152 @@ jobs:
         java-version: '8'
         distribution: 'temurin'
     
-    - name: Create build scripts if missing
+    - name: Install Android SDK Build Tools
       run: |
-        mkdir -p scripts
+        # Download Android build tools for APK creation
+        mkdir -p android-sdk
+        cd android-sdk
         
-        # Create build_sony_apk.sh if it doesn't exist
-        if [ ! -f "scripts/build_sony_apk.sh" ]; then
-          cat > scripts/build_sony_apk.sh << 'SCRIPT_EOF'
-        #!/bin/bash
-        set -e
-        echo "🎥 Building Sony Camera App APK..."
+        # Get build-tools
+        wget -q https://dl.google.com/android/repository/build-tools_r28.0.3-linux.zip
+        unzip -q build-tools_r28.0.3-linux.zip
+        mv android-10 build-tools 2>/dev/null || true
         
-        APP_NAME="CleanHDMI"
-        PACKAGE="com.github.cleanhdmi"
-        BUILD_DIR="build"
-        OUTPUT_DIR="$BUILD_DIR/sony"
+        # Get Android platform
+        wget -q https://dl.google.com/android/repository/android-10_r02.zip
+        unzip -q android-10_r02.zip
         
-        rm -rf $OUTPUT_DIR
-        mkdir -p $OUTPUT_DIR
+        cd ..
+        export PATH=$PATH:$PWD/android-sdk/build-tools/28.0.3
+        echo "PATH=$PATH" >> $GITHUB_ENV
+    
+    - name: Download working Sony APK as template
+      run: |
+        echo "📥 Downloading reference Sony app..."
+        mkdir -p build/reference
         
-        # Download Android stub
-        if [ ! -f "sdk/sony-android.jar" ]; then
-            mkdir -p sdk
-            curl -L -o sdk/sony-android.jar \
-                "https://github.com/Sable/android-platforms/raw/master/android-10/android.jar" \
-                2>/dev/null || echo "Download failed"
-        fi
+        # Download a known working app
+        wget -O build/reference/reference.apk \
+          "https://github.com/ma1co/PMCADemo/releases/download/release-14/com.github.ma1co.PMCADemo-release-14.apk" || \
+        wget -O build/reference/reference.apk \
+          "https://github.com/ma1co/OpenMemories-Tweak/releases/download/release-41/com.github.ma1co.OpenMemories-Tweak-release-41.apk"
         
-        # Create simple MainActivity
-        mkdir -p src/main/java/com/github/cleanhdmi
-        cat > src/main/java/com/github/cleanhdmi/MainActivity.java << 'EOF'
+        # Extract it
+        cd build/reference
+        unzip -q reference.apk
+        cd ../..
+        
+        echo "✅ Reference APK extracted"
+    
+    - name: Create Sony-compatible source
+      run: |
+        mkdir -p src/sony/java/com/github/cleanhdmi
+        
+        # Create a simple activity that Sony cameras will accept
+        cat > src/sony/java/com/github/cleanhdmi/MainActivity.java << 'EOF'
         package com.github.cleanhdmi;
+        
         import android.app.Activity;
         import android.os.Bundle;
         import android.widget.TextView;
-        import android.view.Gravity;
+        import android.view.WindowManager;
+        import android.view.Window;
+        import android.view.View;
         
         public class MainActivity extends Activity {
-            @Override
-            protected void onCreate(Bundle savedInstanceState) {
+            private TextView textView;
+            private View rootView;
+            private boolean uiHidden = false;
+            
+            public void onCreate(Bundle savedInstanceState) {
                 super.onCreate(savedInstanceState);
-                TextView tv = new TextView(this);
-                tv.setText("Clean HDMI Mode Active");
-                tv.setGravity(Gravity.CENTER);
-                tv.setTextSize(24);
-                setContentView(tv);
+                
+                // Full screen
+                requestWindowFeature(Window.FEATURE_NO_TITLE);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                
+                // Create text view
+                textView = new TextView(this);
+                textView.setText("Clean HDMI Active\nTap to toggle UI");
+                textView.setTextSize(20);
+                textView.setTextColor(0xFFFFFFFF);
+                textView.setBackgroundColor(0xFF000000);
+                textView.setGravity(17); // CENTER
+                
+                setContentView(textView);
+                rootView = textView;
+                
+                // Click to toggle
+                textView.setOnClickListener(new View.OnClickListener() {
+                    public void onClick(View v) {
+                        if (uiHidden) {
+                            rootView.setVisibility(View.VISIBLE);
+                            uiHidden = false;
+                        } else {
+                            rootView.setVisibility(View.INVISIBLE);
+                            uiHidden = true;
+                        }
+                    }
+                });
             }
         }
         EOF
+    
+    - name: Build Sony APK with proper structure
+      run: |
+        echo "🔨 Building Sony APK..."
         
-        # Compile
-        mkdir -p $OUTPUT_DIR/classes
-        if [ -f "sdk/sony-android.jar" ]; then
-            javac -bootclasspath sdk/sony-android.jar \
-                  -d $OUTPUT_DIR/classes \
-                  -source 1.6 -target 1.6 \
-                  src/main/java/com/github/cleanhdmi/*.java
+        BUILD_DIR="build/sony"
+        mkdir -p $BUILD_DIR/classes
+        mkdir -p $BUILD_DIR/res/values
+        
+        # Use Android JAR from reference or download
+        if [ -f "build/reference/android.jar" ]; then
+          ANDROID_JAR="build/reference/android.jar"
         else
-            javac -d $OUTPUT_DIR/classes \
-                  -source 1.6 -target 1.6 \
-                  src/main/java/com/github/cleanhdmi/*.java
+          # Download Android 10 JAR (API level used by Sony cameras)
+          wget -q -O android.jar \
+            "https://github.com/Sable/android-platforms/raw/master/android-10/android.jar" || \
+          wget -q -O android.jar \
+            "https://github.com/Sable/android-platforms/raw/master/android-4/android.jar"
+          ANDROID_JAR="android.jar"
         fi
         
-        # Create minimal DEX
-        cd $OUTPUT_DIR/classes
-        jar cf ../classes.jar com
-        cd ../../..
-        mv $OUTPUT_DIR/classes.jar $OUTPUT_DIR/classes.dex
+        # Compile Java
+        echo "Compiling Java..."
+        javac -bootclasspath $ANDROID_JAR \
+              -source 1.6 -target 1.6 \
+              -d $BUILD_DIR/classes \
+              src/sony/java/com/github/cleanhdmi/*.java
+        
+        # Create DEX using dx or d8
+        echo "Creating DEX..."
+        if command -v dx &> /dev/null; then
+          dx --dex --output=$BUILD_DIR/classes.dex $BUILD_DIR/classes
+        elif command -v d8 &> /dev/null; then
+          d8 --min-api 10 --output $BUILD_DIR $BUILD_DIR/classes/com/github/cleanhdmi/*.class
+        else
+          # Fallback: download dx.jar
+          wget -q -O dx.jar \
+            "https://github.com/PerfectSlayer/dx-binary/raw/master/dx.jar"
+          java -jar dx.jar --dex --output=$BUILD_DIR/classes.dex $BUILD_DIR/classes
+        fi
         
         # Create AndroidManifest.xml
-        cat > $OUTPUT_DIR/AndroidManifest.xml << 'EOF'
+        cat > $BUILD_DIR/AndroidManifest.xml << 'EOF'
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-            package="com.github.cleanhdmi">
+            package="com.github.cleanhdmi"
+            android:versionCode="1"
+            android:versionName="1.0.0">
+            
+            <uses-sdk android:minSdkVersion="10" android:targetSdkVersion="10" />
+            
             <application android:label="Clean HDMI">
-                <activity android:name=".MainActivity">
+                <activity
+                    android:name=".MainActivity"
+                    android:label="Clean HDMI">
                     <intent-filter>
                         <action android:name="android.intent.action.MAIN" />
                         <category android:name="android.intent.category.LAUNCHER" />
@@ -294,47 +364,161 @@ jobs:
         </manifest>
         EOF
         
-        # Create APK
-        cd $OUTPUT_DIR
-        zip -0 -r ${APP_NAME}.apk AndroidManifest.xml classes.dex
-        cd ../..
+        # Create resources
+        cat > $BUILD_DIR/res/values/strings.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <string name="app_name">Clean HDMI</string>
+        </resources>
+        EOF
         
-        echo "✅ Sony APK created: $OUTPUT_DIR/${APP_NAME}.apk"
-        ls -lh $OUTPUT_DIR/${APP_NAME}.apk
-        SCRIPT_EOF
+        # Package with aapt (if available) or manually
+        cd $BUILD_DIR
+        
+        if command -v aapt &> /dev/null; then
+          echo "Using aapt..."
+          aapt package -f -M AndroidManifest.xml -S res -I ../../$ANDROID_JAR -F base.apk
+          aapt add base.apk classes.dex
+          mv base.apk CleanHDMI_unsigned.apk
+        else
+          echo "Manual APK creation..."
+          # Try to use aapt from reference APK tools
+          if [ -f "../../build/reference/aapt" ]; then
+            ../../build/reference/aapt package -f -M AndroidManifest.xml -S res -F base.apk
+            ../../build/reference/aapt add base.apk classes.dex
+            mv base.apk CleanHDMI_unsigned.apk
+          else
+            # Fully manual
+            zip -0 CleanHDMI_unsigned.apk AndroidManifest.xml classes.dex res/values/strings.xml
+          fi
         fi
         
-        chmod +x scripts/build_sony_apk.sh
+        cd ../..
     
-    - name: Setup minimal Android tools
+    - name: Sign APK with test certificate
       run: |
-        # Download only necessary tools for Sony build
-        mkdir -p android-tools
-        cd android-tools
+        cd build/sony
         
-        # Get dx tool
-        wget -q https://github.com/PerfectSlayer/dx-binary/raw/master/dx.jar || echo "dx download failed"
+        # Download test signing keys (from AOSP)
+        echo "📝 Signing APK..."
         
-        cd ..
-        export PATH=$PATH:$PWD/android-tools
+        # Create keystore
+        keytool -genkey -v -keystore debug.keystore \
+                -alias androiddebugkey \
+                -keyalg RSA -keysize 2048 -validity 10000 \
+                -storepass android -keypass android \
+                -dname "CN=Android Debug,O=Android,C=US" \
+                -noprompt
+        
+        # Sign APK
+        jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 \
+                  -keystore debug.keystore -storepass android \
+                  CleanHDMI_unsigned.apk androiddebugkey
+        
+        # Align APK
+        if command -v zipalign &> /dev/null; then
+          zipalign -v 4 CleanHDMI_unsigned.apk CleanHDMI.apk
+        else
+          # Try to download zipalign
+          wget -q -O zipalign https://github.com/iBotPeaches/Apktool/raw/master/scripts/linux/zipalign
+          chmod +x zipalign
+          ./zipalign -v 4 CleanHDMI_unsigned.apk CleanHDMI.apk || \
+            mv CleanHDMI_unsigned.apk CleanHDMI.apk
+        fi
+        
+        # Verify APK
+        echo "📦 APK Info:"
+        ls -lh CleanHDMI.apk
+        unzip -l CleanHDMI.apk | head -20
+        
+        cd ../..
     
-    - name: Build Sony APK
+    - name: Create alternative APK using apktool
       run: |
-        ./scripts/build_sony_apk.sh
+        # Alternative method using apktool
+        echo "🔧 Creating alternative APK with apktool..."
+        
+        # Download apktool
+        wget -q -O apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.0/apktool_2.9.0.jar
+        
+        # Decompile reference APK
+        java -jar apktool.jar d -f build/reference/reference.apk -o build/apktool_work
+        
+        # Replace main activity
+        mkdir -p build/apktool_work/smali/com/github/cleanhdmi
+        
+        # Create simple smali code (assembly for Dalvik)
+        cat > build/apktool_work/smali/com/github/cleanhdmi/MainActivity.smali << 'EOF'
+        .class public Lcom/github/cleanhdmi/MainActivity;
+        .super Landroid/app/Activity;
+        
+        .method public constructor <init>()V
+            .registers 1
+            invoke-direct {p0}, Landroid/app/Activity;-><init>()V
+            return-void
+        .end method
+        
+        .method public onCreate(Landroid/os/Bundle;)V
+            .registers 3
+            invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V
+            return-void
+        .end method
+        EOF
+        
+        # Update manifest
+        sed -i 's/com\.github\.ma1co\.[^"]*/com.github.cleanhdmi/g' build/apktool_work/AndroidManifest.xml
+        sed -i 's/PMCADemo/Clean HDMI/g' build/apktool_work/AndroidManifest.xml
+        sed -i 's/OpenMemories-Tweak/Clean HDMI/g' build/apktool_work/AndroidManifest.xml
+        
+        # Rebuild APK
+        java -jar apktool.jar b build/apktool_work -o build/sony/CleanHDMI_apktool.apk
+        
+        # Sign it
+        cd build/sony
+        jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 \
+                  -keystore debug.keystore -storepass android \
+                  CleanHDMI_apktool.apk androiddebugkey
+        cd ../..
+        
+        echo "✅ Alternative APK created"
     
-    - name: Create APK info
+    - name: Create installation instructions
       run: |
-        echo "## Sony APK Build Information" > build/sony/README.md
-        echo "Build Date: $(date)" >> build/sony/README.md
-        echo "Commit: ${{ github.sha }}" >> build/sony/README.md
-        echo "" >> build/sony/README.md
-        echo "### Installation:" >> build/sony/README.md
-        echo '```bash' >> build/sony/README.md
-        echo "pip install pmca-py" >> build/sony/README.md
-        echo "python -m pmca.installer install CleanHDMI.apk" >> build/sony/README.md
-        echo '```' >> build/sony/README.md
+        cat > build/sony/INSTALL.md << 'EOF'
+        # Clean HDMI for Sony Installation
+        
+        ## Files
+        - `CleanHDMI.apk` - Main APK built from source
+        - `CleanHDMI_apktool.apk` - Alternative APK built with apktool
+        
+        ## Installation
+        
+        1. Connect camera via USB in Mass Storage mode
+        2. Install using pmca-py:
+        
+        ```bash
+        pip install pmca-py
+        python -m pmca.installer install CleanHDMI.apk
+        ```
+        
+        If the main APK doesn't work, try the alternative:
+        ```bash
+        python -m pmca.installer install CleanHDMI_apktool.apk
+        ```
+        
+        ## Troubleshooting
+        
+        If installation fails:
+        1. Make sure camera is in Mass Storage mode (not MTP)
+        2. Try installing OpenMemories-Tweak first to unlock the camera
+        3. Use the alternative APK file
+        
+        ## Build Info
+        - Build Date: $(date)
+        - Commit: ${{ github.sha }}
+        EOF
     
-    - name: Upload Sony APK
+    - name: Upload Sony APKs
       uses: actions/upload-artifact@v4
       with:
         name: CleanHDMI-Sony-${{ github.run_number }}
@@ -342,37 +526,3 @@ jobs:
           build/sony/*.apk
           build/sony/*.md
         retention-days: 30
-        if-no-files-found: warn
-
-  create-release:
-    runs-on: ubuntu-latest
-    needs: [build-apk, build-sony-apk]
-    if: startsWith(github.ref, 'refs/tags/')
-    
-    steps:
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
-    
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          artifacts/**/CleanHDMI.apk
-          artifacts/**/README.md
-        draft: false
-        prerelease: false
-        body: |
-          ## Clean HDMI for Sony Cameras
-          
-          ### Installation:
-          1. Download the APK file
-          2. Connect camera via USB (Mass Storage mode)
-          3. Install using pmca-py:
-          ```bash
-          pip install pmca-py
-          python -m pmca.installer install CleanHDMI.apk
-          ```
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

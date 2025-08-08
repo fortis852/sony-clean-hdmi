@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Clean HDMI</string>
+    <string name="focus_locked">Focus Locked</string>
+    <string name="focus_unlocked">Focus Unlocked</string>
+    <string name="exposure_locked">Exposure Locked</string>
+    <string name="menu_settings">Settings</string>
+    <string name="menu_hide">Hide UI</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_connected">HDMI Connected</string>
+</resources>

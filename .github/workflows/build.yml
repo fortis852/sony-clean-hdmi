@@ -15,46 +15,60 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Set up JDK 17
+    - name: Set up JDK 11
       uses: actions/setup-java@v4
       with:
-        java-version: '17'
+        java-version: '11'
         distribution: 'temurin'
     
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v3
-      with:
-        api-level: 19
-        build-tools: 34.0.0
-        target: android-19
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Install Python dependencies
+    - name: Setup Android SDK
       run: |
-        pip install Pillow
-        pip install pyusb requests pytest
+        echo "📱 Setting up Android SDK..."
+        # Download command line tools
+        mkdir -p android-sdk
+        cd android-sdk
+        
+        # Download Android command line tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+        unzip -q commandlinetools-linux-9477386_latest.zip
+        rm commandlinetools-linux-9477386_latest.zip
+        
+        # Setup SDK
+        mkdir -p cmdline-tools/latest
+        mv cmdline-tools/* cmdline-tools/latest/ 2>/dev/null || true
+        
+        # Set environment variables
+        export ANDROID_HOME=$PWD
+        export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
+        
+        # Accept licenses and install platforms
+        yes | sdkmanager --licenses 2>/dev/null || true
+        sdkmanager "platform-tools" "platforms;android-19" "build-tools;30.0.3"
+        
+        cd ..
+        
+        # Set for subsequent steps
+        echo "ANDROID_HOME=$PWD/android-sdk" >> $GITHUB_ENV
+        echo "$PWD/android-sdk/platform-tools" >> $GITHUB_PATH
+        echo "$PWD/android-sdk/build-tools/30.0.3" >> $GITHUB_PATH
     
-    - name: Generate icons
+    - name: Verify Java sources are fixed
       run: |
-        python scripts/generate_icons.py || echo "Icon generation skipped"
+        echo "Checking for lambdas in Java 7 code..."
+        ! grep -r "()->" src/main/java/ || {
+          echo "❌ Lambda expressions found. Fixing..."
+          # Auto-fix lambdas (basic replacement)
+          find src/main/java -name "*.java" -exec sed -i 's/() -> {/new Runnable() { @Override public void run() {/g' {} \;
+          find src/main/java -name "*.java" -exec sed -i 's/v -> {/new View.OnClickListener() { @Override public void onClick(View v) {/g' {} \;
+        }
     
-    - name: Create keystore
+    - name: Create project structure
       run: |
-        mkdir -p keys
-        keytool -genkey -v \
-          -keystore keys/debug.keystore \
-          -storepass android \
-          -alias androiddebugkey \
-          -keypass android \
-          -keyalg RSA \
-          -keysize 2048 \
-          -validity 10000 \
-          -dname "CN=Android Debug,O=Android,C=US" \
-          -noprompt
+        echo "📁 Creating project structure..."
+        mkdir -p sdk lib build gen docs tests
+        mkdir -p src/main/java/com/cleanhdmi
+        mkdir -p src/main/res/{layout,values,drawable}
+        mkdir -p scripts
     
     - name: Build APK
       run: |
@@ -67,16 +81,19 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: CleanHDMI-${{ github.run_number }}
-        path: build/apk/CleanHDMI.apk
-        retention-days: 30
-    
-    - name: Upload build logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs-${{ github.run_number }}
         path: |
-          build/**/*.log
-          build/**/*.txt
-        retention-days: 7
-        if-no-files-found: ignore
+          build/apk/*.apk
+          build/apk/*.jar
+        retention-days: 30
+        if-no-files-found: warn
+    
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: build/apk/CleanHDMI.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      

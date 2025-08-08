@@ -1,0 +1,45 @@
+{
+  "name": "Sony Clean HDMI Dev Environment",
+  "image": "mcr.microsoft.com/devcontainers/java:17-bullseye",
+  
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.10"
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-vscode.makefile-tools",
+        "redhat.vscode-xml"
+      ],
+      "settings": {
+        "java.home": "/usr/lib/jvm/java-17-openjdk-amd64",
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.exclude": {
+          "**/.git": true,
+          "**/.DS_Store": true,
+          "**/build": true,
+          "**/gen": true
+        }
+      }
+    }
+  },
+  
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "echo '🚀 Ready for development!'",
+  
+  "forwardPorts": [8080, 5037, 5555],
+  
+  "mounts": [
+    "source=${localWorkspaceFolder}/sdk,target=/workspace/sdk,type=bind,consistency=cached"
+  ],
+  
+  "remoteUser": "vscode"
+}

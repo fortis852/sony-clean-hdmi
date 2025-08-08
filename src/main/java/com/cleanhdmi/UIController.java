@@ -6,6 +6,7 @@ import android.widget.LinearLayout;
 import android.widget.Button;
 import android.widget.TextView;
 import android.view.Gravity;
+import android.view.View;
 import android.graphics.Color;
 
 /**
@@ -42,10 +43,26 @@ public class UIController {
         // Add control buttons
         Button focusButton = new Button(context);
         focusButton.setText("Toggle Focus Lock");
-        focusButton.setOnClickListener(v -> {
-            if (onFnPress != null) onFnPress.run();
+        focusButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (onFnPress != null) {
+                    onFnPress.run();
+                }
+            }
         });
         uiPanel.addView(focusButton);
+        
+        // Add exposure button
+        Button exposureButton = new Button(context);
+        exposureButton.setText("Lock Exposure");
+        exposureButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // Handle exposure lock
+            }
+        });
+        uiPanel.addView(exposureButton);
         
         // Position UI panel
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(

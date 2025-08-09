@@ -1,0 +1,390 @@
+name: Build Working Clean HDMI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/clean-hdmi-working.yml'
+
+jobs:
+  build-working:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Setup Java 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+    
+    - name: Download tools
+      run: |
+        echo "📥 Downloading tools..."
+        
+        # Download apktool
+        wget https://github.com/iBotPeaches/Apktool/releases/download/v2.9.0/apktool_2.9.0.jar -O apktool.jar
+        
+        # Download base APK
+        wget https://github.com/ma1co/PMCADemo/releases/download/v0.7/PMCADemo-release-0.7.apk -O base.apk
+        
+        echo "✅ Tools ready"
+    
+    - name: Decompile and analyze structure
+      run: |
+        echo "🔍 Analyzing APK structure..."
+        
+        java -jar apktool.jar d -f base.apk -o app
+        
+        cd app
+        
+        # Find MainActivity
+        echo "Looking for MainActivity..."
+        find smali -name "MainActivity.smali" -type f > ../main_activities.txt
+        
+        echo "Found activities:"
+        cat ../main_activities.txt
+        
+        # Find the actual MainActivity path
+        MAIN_ACTIVITY=$(cat ../main_activities.txt | grep "pmcademo" | head -1)
+        echo "Main activity: $MAIN_ACTIVITY"
+        
+        # Show onCreate method structure
+        if [ -n "$MAIN_ACTIVITY" ]; then
+          echo "onCreate method structure:"
+          grep -A 20 "onCreate" "$MAIN_ACTIVITY" | head -30
+        fi
+        
+        cd ..
+    
+    - name: Inject Clean HDMI functionality
+      run: |
+        echo "💉 Injecting Clean HDMI code..."
+        
+        cd app
+        
+        # Find the MainActivity
+        MAIN_ACTIVITY=$(find smali -path "*pmcademo*" -name "MainActivity.smali" | head -1)
+        
+        if [ -z "$MAIN_ACTIVITY" ]; then
+          echo "❌ MainActivity not found"
+          exit 1
+        fi
+        
+        echo "Modifying: $MAIN_ACTIVITY"
+        
+        # Backup original
+        cp "$MAIN_ACTIVITY" "${MAIN_ACTIVITY}.backup"
+        
+        # Create a modified version with Clean HDMI functionality
+        cat > modified_main.smali << 'EOF'
+        # This will be inserted into onCreate method
+        
+        # Add clean HDMI initialization code
+        # Create black overlay view
+        new-instance v10, Landroid/view/View;
+        invoke-direct {v10, p0}, Landroid/view/View;-><init>(Landroid/content/Context;)V
+        
+        # Set black background
+        const/high16 v11, -0x1000000
+        invoke-virtual {v10, v11}, Landroid/view/View;->setBackgroundColor(I)V
+        
+        # Set to fullscreen
+        new-instance v11, Landroid/view/ViewGroup$LayoutParams;
+        const/4 v12, -0x1
+        const/4 v13, -0x1
+        invoke-direct {v11, v12, v13}, Landroid/view/ViewGroup$LayoutParams;-><init>(II)V
+        invoke-virtual {v10, v11}, Landroid/view/View;->setLayoutParams(Landroid/view/ViewGroup$LayoutParams;)V
+        
+        # Initially hide it
+        const/16 v11, 0x8
+        invoke-virtual {v10, v11}, Landroid/view/View;->setVisibility(I)V
+        
+        # Store as field for later access
+        iput-object v10, p0, Lcom/github/ma1co/pmcademo/MainActivity;->cleanHDMIView:Landroid/view/View;
+        
+        # Get root view and add our overlay
+        invoke-virtual {p0}, Landroid/app/Activity;->getWindow()Landroid/view/Window;
+        move-result-object v11
+        invoke-virtual {v11}, Landroid/view/Window;->getDecorView()Landroid/view/View;
+        move-result-object v11
+        check-cast v11, Landroid/view/ViewGroup;
+        invoke-virtual {v11, v10}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
+        EOF
+        
+        # Now we need to actually modify the MainActivity
+        # This is complex, so let's try a different approach
+        
+        # Create a new activity that extends the original
+        PACKAGE_DIR=$(dirname "$MAIN_ACTIVITY")
+        
+        cat > "$PACKAGE_DIR/CleanHDMIActivity.smali" << 'EOF'
+        .class public Lcom/github/ma1co/pmcademo/CleanHDMIActivity;
+        .super Lcom/github/ma1co/pmcademo/MainActivity;
+        .source "CleanHDMIActivity.java"
+        
+        # Instance fields
+        .field private cleanOverlay:Landroid/view/View;
+        .field private isCleanMode:Z
+        .field private statusText:Landroid/widget/TextView;
+        
+        # Direct methods
+        .method public constructor <init>()V
+            .locals 1
+            
+            invoke-direct {p0}, Lcom/github/ma1co/pmcademo/MainActivity;-><init>()V
+            
+            const/4 v0, 0x0
+            iput-boolean v0, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->isCleanMode:Z
+            
+            return-void
+        .end method
+        
+        # Virtual methods
+        .method protected onCreate(Landroid/os/Bundle;)V
+            .locals 8
+            .param p1, "savedInstanceState"
+            
+            # Call parent onCreate
+            invoke-super {p0, p1}, Lcom/github/ma1co/pmcademo/MainActivity;->onCreate(Landroid/os/Bundle;)V
+            
+            # Add our clean HDMI overlay
+            new-instance v0, Landroid/widget/FrameLayout;
+            invoke-direct {v0, p0}, Landroid/widget/FrameLayout;-><init>(Landroid/content/Context;)V
+            
+            # Create status text
+            new-instance v1, Landroid/widget/TextView;
+            invoke-direct {v1, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
+            iput-object v1, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->statusText:Landroid/widget/TextView;
+            
+            const-string v2, "CLEAN HDMI MODE\nPress MENU to toggle"
+            invoke-virtual {v1, v2}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+            
+            const/4 v2, -0x1
+            invoke-virtual {v1, v2}, Landroid/widget/TextView;->setTextColor(I)V
+            
+            const/high16 v2, 0x41c00000
+            invoke-virtual {v1, v2}, Landroid/widget/TextView;->setTextSize(F)V
+            
+            const/16 v2, 0x11
+            invoke-virtual {v1, v2}, Landroid/widget/TextView;->setGravity(I)V
+            
+            invoke-virtual {v0, v1}, Landroid/widget/FrameLayout;->addView(Landroid/view/View;)V
+            
+            # Create black overlay
+            new-instance v3, Landroid/view/View;
+            invoke-direct {v3, p0}, Landroid/view/View;-><init>(Landroid/content/Context;)V
+            iput-object v3, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->cleanOverlay:Landroid/view/View;
+            
+            const/high16 v4, -0x1000000
+            invoke-virtual {v3, v4}, Landroid/view/View;->setBackgroundColor(I)V
+            
+            const/16 v4, 0x8
+            invoke-virtual {v3, v4}, Landroid/view/View;->setVisibility(I)V
+            
+            invoke-virtual {v0, v3}, Landroid/widget/FrameLayout;->addView(Landroid/view/View;)V
+            
+            # Add to window
+            invoke-virtual {p0}, Landroid/app/Activity;->getWindow()Landroid/view/Window;
+            move-result-object v5
+            invoke-virtual {v5}, Landroid/view/Window;->getDecorView()Landroid/view/View;
+            move-result-object v5
+            check-cast v5, Landroid/view/ViewGroup;
+            
+            new-instance v6, Landroid/view/ViewGroup$LayoutParams;
+            const/4 v7, -0x1
+            invoke-direct {v6, v7, v7}, Landroid/view/ViewGroup$LayoutParams;-><init>(II)V
+            
+            invoke-virtual {v5, v0, v6}, Landroid/view/ViewGroup;->addView(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V
+            
+            # Log
+            const-string v7, "CleanHDMI"
+            const-string v6, "Clean HDMI mode initialized"
+            invoke-static {v7, v6}, Landroid/util/Log;->d(Ljava/lang/String;Ljava/lang/String;)I
+            
+            return-void
+        .end method
+        
+        .method public onKeyDown(ILandroid/view/KeyEvent;)Z
+            .locals 4
+            .param p1, "keyCode"
+            .param p2, "event"
+            
+            # Check for MENU button
+            const/16 v0, 0x52
+            if-ne p1, v0, :not_menu
+            
+            # Toggle clean mode
+            iget-boolean v1, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->isCleanMode:Z
+            if-nez v1, :is_clean
+            
+            # Enable clean mode
+            const/4 v1, 0x1
+            iput-boolean v1, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->isCleanMode:Z
+            
+            iget-object v2, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->cleanOverlay:Landroid/view/View;
+            const/4 v3, 0x0
+            invoke-virtual {v2, v3}, Landroid/view/View;->setVisibility(I)V
+            
+            iget-object v2, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->statusText:Landroid/widget/TextView;
+            const/16 v3, 0x8
+            invoke-virtual {v2, v3}, Landroid/widget/TextView;->setVisibility(I)V
+            
+            const-string v2, "CleanHDMI"
+            const-string v3, "Clean mode ON"
+            invoke-static {v2, v3}, Landroid/util/Log;->d(Ljava/lang/String;Ljava/lang/String;)I
+            
+            return v1
+            
+            :is_clean
+            # Disable clean mode
+            const/4 v1, 0x0
+            iput-boolean v1, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->isCleanMode:Z
+            
+            iget-object v2, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->cleanOverlay:Landroid/view/View;
+            const/16 v3, 0x8
+            invoke-virtual {v2, v3}, Landroid/view/View;->setVisibility(I)V
+            
+            iget-object v2, p0, Lcom/github/ma1co/pmcademo/CleanHDMIActivity;->statusText:Landroid/widget/TextView;
+            const/4 v3, 0x0
+            invoke-virtual {v2, v3}, Landroid/widget/TextView;->setVisibility(I)V
+            
+            const-string v2, "CleanHDMI"
+            const-string v3, "Clean mode OFF"
+            invoke-static {v2, v3}, Landroid/util/Log;->d(Ljava/lang/String;Ljava/lang/String;)I
+            
+            const/4 v1, 0x1
+            return v1
+            
+            :not_menu
+            invoke-super {p0, p1, p2}, Lcom/github/ma1co/pmcademo/MainActivity;->onKeyDown(ILandroid/view/KeyEvent;)Z
+            move-result v0
+            return v0
+        .end method
+        EOF
+        
+        echo "✅ CleanHDMIActivity created"
+        
+        # Now update AndroidManifest to use our new activity
+        # Replace MainActivity with CleanHDMIActivity
+        sed -i 's/\.MainActivity"/\.CleanHDMIActivity"/g' AndroidManifest.xml
+        
+        # Change app name
+        sed -i 's/>PMCADemo</>Clean HDMI</g' res/values/strings.xml
+        sed -i 's/>Demo</>Clean HDMI</g' res/values/strings.xml
+        
+        cd ..
+        
+        echo "✅ Modifications complete"
+    
+    - name: Build APK
+      run: |
+        echo "📦 Building APK..."
+        
+        java -jar apktool.jar b app -o CleanHDMI_Working.apk
+        
+        if [ ! -f "CleanHDMI_Working.apk" ]; then
+          echo "❌ Build failed"
+          exit 1
+        fi
+        
+        echo "✅ APK built"
+        ls -lh CleanHDMI_Working.apk
+    
+    - name: Sign APK
+      run: |
+        echo "🔐 Signing APK..."
+        
+        # Create keystore
+        keytool -genkey -v \
+          -keystore debug.keystore \
+          -alias debug \
+          -keyalg RSA \
+          -keysize 2048 \
+          -validity 10000 \
+          -storepass android \
+          -keypass android \
+          -dname "CN=Debug,O=Debug,C=US" \
+          -noprompt
+        
+        # Sign
+        jarsigner -verbose \
+          -sigalg SHA1withRSA \
+          -digestalg SHA1 \
+          -keystore debug.keystore \
+          -storepass android \
+          CleanHDMI_Working.apk \
+          debug
+        
+        echo "✅ Signed"
+    
+    - name: Create documentation
+      run: |
+        echo "📄 Creating documentation..."
+        
+        cat > README.txt << 'EOF'
+        Clean HDMI Working Version
+        ==========================
+        
+        This version extends the original MainActivity
+        to add Clean HDMI functionality.
+        
+        What it does:
+        ------------
+        1. Launches normally as "Clean HDMI" app
+        2. Shows "CLEAN HDMI MODE" text on screen
+        3. Press MENU button to activate clean mode
+        4. Screen goes completely black (clean HDMI output)
+        5. Press MENU again to return to normal
+        
+        How it works:
+        ------------
+        - Creates CleanHDMIActivity that extends MainActivity
+        - Adds black overlay on top of existing UI
+        - Toggles overlay visibility with MENU button
+        - Keeps all original functionality intact
+        
+        Installation:
+        ------------
+        pmca-console.exe install -f CleanHDMI_Working.apk
+        
+        Usage:
+        -----
+        1. Launch "Clean HDMI" from camera apps
+        2. You should see "CLEAN HDMI MODE" text
+        3. Press MENU to hide all UI
+        4. Press MENU again to show UI
+        
+        Safety:
+        ------
+        - Keeps original package name
+        - Extends rather than replaces functionality
+        - Should not break camera system
+        
+        Build: $(date)
+        EOF
+        
+        echo "✅ Documentation created"
+    
+    - name: Package files
+      run: |
+        echo "📦 Creating final package..."
+        
+        mkdir -p output
+        mv CleanHDMI_Working.apk output/
+        mv README.txt output/
+        
+        cd output
+        echo "Files ready:"
+        ls -lh
+        
+        echo ""
+        echo "✅ This version should actually show Clean HDMI functionality!"
+        echo "Look for 'CLEAN HDMI MODE' text when you launch the app."
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: CleanHDMI-Working-${{ github.run_number }}
+        path: output/*
+        retention-days: 90
+        if-no-files-found: error

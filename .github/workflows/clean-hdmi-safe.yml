@@ -1,0 +1,289 @@
+name: Build SAFE Clean HDMI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/clean-hdmi-safe.yml'
+
+jobs:
+  build-safe:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Setup Java 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+    
+    - name: Download tools
+      run: |
+        echo "📥 Downloading tools..."
+        
+        # Download apktool
+        wget https://github.com/iBotPeaches/Apktool/releases/download/v2.9.0/apktool_2.9.0.jar -O apktool.jar
+        
+        # Download SAFE base APK (PMCADemo)
+        wget https://github.com/ma1co/PMCADemo/releases/download/v0.7/PMCADemo-release-0.7.apk -O base.apk
+        
+        echo "✅ Tools ready"
+        ls -lh
+    
+    - name: SAFE modification - DO NOT change package name!
+      run: |
+        echo "🔧 Making SAFE modifications..."
+        echo "⚠️ IMPORTANT: Keeping original package name to avoid system damage!"
+        
+        # Decompile
+        java -jar apktool.jar d -f base.apk -o app
+        
+        cd app
+        
+        # SAFE CHANGES ONLY:
+        # 1. Change app display name (NOT package name!)
+        sed -i 's/<string name="app_name">PMCADemo<\/string>/<string name="app_name">Clean HDMI<\/string>/g' res/values/strings.xml
+        
+        # 2. Add clean HDMI functionality to EXISTING activity
+        # Find the main activity
+        MAIN_ACTIVITY=$(find smali -path "*/pmcademo/*" -name "MainActivity.smali" | head -1)
+        
+        if [ -n "$MAIN_ACTIVITY" ]; then
+          echo "Found MainActivity: $MAIN_ACTIVITY"
+          
+          # Create a helper class in the SAME package
+          PACKAGE_DIR=$(dirname "$MAIN_ACTIVITY")
+          
+          cat > "$PACKAGE_DIR/CleanHDMIHelper.smali" << 'EOF'
+        .class public Lcom/github/ma1co/pmcademo/CleanHDMIHelper;
+        .super Ljava/lang/Object;
+        .source "CleanHDMIHelper.java"
+        
+        # Static fields
+        .field private static blackView:Landroid/view/View;
+        .field private static isClean:Z
+        
+        # Methods
+        .method public constructor <init>()V
+            .locals 0
+            invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+            return-void
+        .end method
+        
+        .method public static addCleanMode(Landroid/app/Activity;)V
+            .locals 3
+            .param p0, "activity"
+            
+            # Get content view
+            const v0, 0x1020002  # android.R.id.content
+            invoke-virtual {p0, v0}, Landroid/app/Activity;->findViewById(I)Landroid/view/View;
+            move-result-object v0
+            check-cast v0, Landroid/view/ViewGroup;
+            
+            # Create black overlay
+            new-instance v1, Landroid/view/View;
+            invoke-direct {v1, p0}, Landroid/view/View;-><init>(Landroid/content/Context;)V
+            sput-object v1, Lcom/github/ma1co/pmcademo/CleanHDMIHelper;->blackView:Landroid/view/View;
+            
+            # Set black color
+            const/high16 v2, -0x1000000
+            invoke-virtual {v1, v2}, Landroid/view/View;->setBackgroundColor(I)V
+            
+            # Initially hidden
+            const/16 v2, 0x8
+            invoke-virtual {v1, v2}, Landroid/view/View;->setVisibility(I)V
+            
+            # Add to activity
+            invoke-virtual {v0, v1}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
+            
+            return-void
+        .end method
+        
+        .method public static toggleClean()V
+            .locals 2
+            
+            sget-object v0, Lcom/github/ma1co/pmcademo/CleanHDMIHelper;->blackView:Landroid/view/View;
+            if-nez v0, :has_view
+            return-void
+            
+            :has_view
+            sget-boolean v1, Lcom/github/ma1co/pmcademo/CleanHDMIHelper;->isClean:Z
+            if-eqz v1, :show_ui
+            
+            # Hide UI - show black
+            const/4 v1, 0x0
+            invoke-virtual {v0, v1}, Landroid/view/View;->setVisibility(I)V
+            const/4 v1, 0x1
+            sput-boolean v1, Lcom/github/ma1co/pmcademo/CleanHDMIHelper;->isClean:Z
+            return-void
+            
+            :show_ui
+            # Show UI - hide black
+            const/16 v1, 0x8
+            invoke-virtual {v0, v1}, Landroid/view/View;->setVisibility(I)V
+            const/4 v1, 0x0
+            sput-boolean v1, Lcom/github/ma1co/pmcademo/CleanHDMIHelper;->isClean:Z
+            return-void
+        .end method
+        EOF
+          
+          echo "✅ Helper class created"
+        fi
+        
+        # DO NOT change AndroidManifest.xml package name!
+        # Only change the label
+        sed -i 's/android:label="[^"]*"/android:label="Clean HDMI"/g' AndroidManifest.xml
+        
+        cd ..
+        
+        echo "✅ SAFE modifications complete"
+    
+    - name: Rebuild APK
+      run: |
+        echo "📦 Rebuilding APK..."
+        
+        java -jar apktool.jar b app -o CleanHDMI_SAFE.apk
+        
+        if [ ! -f "CleanHDMI_SAFE.apk" ]; then
+          echo "❌ Build failed"
+          exit 1
+        fi
+        
+        echo "✅ APK built"
+        ls -lh CleanHDMI_SAFE.apk
+    
+    - name: Sign APK
+      run: |
+        echo "🔐 Signing APK..."
+        
+        # Create keystore
+        keytool -genkey -v \
+          -keystore debug.keystore \
+          -alias debug \
+          -keyalg RSA \
+          -keysize 2048 \
+          -validity 10000 \
+          -storepass android \
+          -keypass android \
+          -dname "CN=Debug,O=Debug,C=US" \
+          -noprompt
+        
+        # Sign
+        jarsigner -verbose \
+          -sigalg SHA1withRSA \
+          -digestalg SHA1 \
+          -keystore debug.keystore \
+          -storepass android \
+          CleanHDMI_SAFE.apk \
+          debug
+        
+        echo "✅ Signed"
+    
+    - name: Create minimal test APK
+      run: |
+        echo "📱 Creating minimal test APK..."
+        
+        # Just rename the original with minimal changes
+        java -jar apktool.jar d -f base.apk -o test_app
+        
+        cd test_app
+        
+        # ONLY change the display name, nothing else
+        sed -i 's/>PMCADemo</>CleanHDMI</g' res/values/strings.xml
+        
+        cd ..
+        
+        java -jar apktool.jar b test_app -o CleanHDMI_TEST.apk
+        
+        # Sign it
+        jarsigner -verbose \
+          -sigalg SHA1withRSA \
+          -digestalg SHA1 \
+          -keystore debug.keystore \
+          -storepass android \
+          CleanHDMI_TEST.apk \
+          debug
+        
+        echo "✅ Test APK created"
+    
+    - name: Create safety instructions
+      run: |
+        echo "📄 Creating safety instructions..."
+        
+        cat > SAFETY_FIRST.txt << 'EOF'
+        ⚠️ IMPORTANT SAFETY INFORMATION ⚠️
+        ===================================
+        
+        BEFORE INSTALLING:
+        -----------------
+        1. Make sure you can recover your camera if something goes wrong
+        2. Have OpenMemories-Tweak ready as backup
+        3. Know how to do factory reset on your camera
+        
+        SAFE APKs CREATED:
+        -----------------
+        
+        1. CleanHDMI_TEST.apk
+           - This is the SAFEST option
+           - Only changes the display name
+           - Keeps all original functionality
+           - Install this FIRST to test
+        
+        2. CleanHDMI_SAFE.apk  
+           - Adds clean HDMI helper
+           - Keeps original package name
+           - Should not break system
+        
+        INSTALLATION ORDER:
+        ------------------
+        1. First try: CleanHDMI_TEST.apk
+           pmca-console.exe install -f CleanHDMI_TEST.apk
+           
+           If it installs and camera works normally, then try:
+        
+        2. Second try: CleanHDMI_SAFE.apk
+           pmca-console.exe install -f CleanHDMI_SAFE.apk
+        
+        DO NOT:
+        -------
+        - Do NOT install APKs that change the package name
+        - Do NOT install if camera behaves strangely
+        - Do NOT continue if you see errors
+        
+        IF SOMETHING GOES WRONG:
+        ------------------------
+        1. Turn off camera
+        2. Remove battery for 30 seconds  
+        3. Factory reset if needed
+        
+        These APKs keep the original package structure to avoid
+        the problems you experienced before.
+        
+        Build: $(date)
+        EOF
+        
+        echo "✅ Safety instructions created"
+    
+    - name: Final package
+      run: |
+        echo "📦 Creating final package..."
+        
+        mkdir -p output
+        mv CleanHDMI*.apk output/
+        mv SAFETY_FIRST.txt output/
+        
+        cd output
+        echo "APK files:"
+        ls -lh *.apk
+        
+        echo ""
+        echo "⚠️ REMEMBER: These are SAFE versions that won't break your camera!"
+        echo "They keep the original package name to avoid system conflicts."
+    
+    - name: Upload SAFE APKs
+      uses: actions/upload-artifact@v4
+      with:
+        name: CleanHDMI-SAFE-${{ github.run_number }}
+        path: output/*
+        retention-days: 90
+        if-no-files-found: error

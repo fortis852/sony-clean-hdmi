@@ -382,7 +382,7 @@ jobs:
         echo "Look for 'CLEAN HDMI MODE' text when you launch the app."
     
     - name: Upload APK
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: CleanHDMI-Working-${{ github.run_number }}
         path: output/*

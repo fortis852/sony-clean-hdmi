@@ -365,7 +365,7 @@ jobs:
         cd ..
     
     - name: Upload APKs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: CleanHDMI-Complete-${{ github.run_number }}
         path: output/*

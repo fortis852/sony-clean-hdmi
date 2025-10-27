@@ -581,7 +581,7 @@ jobs:
         echo "• Simple operation with camera buttons"
     
     - name: Upload final APK
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: CleanHDMI-HX400-${{ github.run_number }}
         path: |

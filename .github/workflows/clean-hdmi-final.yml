@@ -594,7 +594,7 @@ jobs:
         echo "• Full screen preview"
     
     - name: Upload final APK
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: CleanHDMI-Final-${{ github.run_number }}
         path: |

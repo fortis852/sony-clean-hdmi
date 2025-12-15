@@ -176,7 +176,7 @@ jobs:
         ANDROID_HOME: ${{ env.ANDROID_HOME }}
     
     - name: Upload APK
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: CleanHDMI-${{ github.run_number }}
         path: |
@@ -187,7 +187,7 @@ jobs:
     
     - name: Upload Build Logs
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: build-logs-${{ github.run_number }}
         path: |
@@ -540,7 +540,7 @@ jobs:
         EOF
     
     - name: Upload Sony APKs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: CleanHDMI-Sony-${{ github.run_number }}
         path: |

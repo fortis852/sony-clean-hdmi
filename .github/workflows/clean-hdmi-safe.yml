@@ -281,7 +281,7 @@ jobs:
         echo "They keep the original package name to avoid system conflicts."
     
     - name: Upload SAFE APKs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: CleanHDMI-SAFE-${{ github.run_number }}
         path: output/*
